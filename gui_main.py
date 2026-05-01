@@ -410,6 +410,7 @@ class TranscribeGUI(QWidget):
 
         self.stop_requested = False
         self.pending_kill = False
+        self.stop_terminate_sent = False
         self._status_full_text = "현재 상태: 대기 중"
         self._current_file_full_text = "현재 처리 중 파일: 없음"
         self._session_full_text = "세션 상태: 확인 안 됨"
@@ -1152,7 +1153,27 @@ class TranscribeGUI(QWidget):
         self.btn_stop_now.setEnabled(not enabled)
 
     def translate_session_status(self, status: str) -> str:
-        return {"running": "진행 중", "completed": "완료", "stopped": "중지됨", "crashed": "비정상 종료"}.get(status, status or "없음")
+        mapping = {
+            "running": "진행 중",
+            "completed": "완료",
+            "stopped": "중지됨",
+            "stopped_by_user": "사용자 중지",
+            "crashed": "비정상 종료",
+            "corrupt_session": "세션 손상",
+        }
+        return mapping.get(status, status or "없음")
+
+    def load_session_state_safely(self, path: str):
+        retries = 3
+        for attempt in range(1, retries + 1):
+            try:
+                with open(path, "r", encoding="utf-8-sig") as f:
+                    return json.load(f)
+            except (PermissionError, json.JSONDecodeError):
+                if attempt < retries:
+                    time.sleep(0.1 * attempt)
+                    continue
+                raise
 
     def update_session_label(self):
         path = self.get_session_state_path()
@@ -1160,8 +1181,7 @@ class TranscribeGUI(QWidget):
             self._set_session_text("세션 상태: 확인 안 됨")
             return
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                state = json.load(f)
+            state = self.load_session_state_safely(path)
             status = self.translate_session_status(state.get("status", "없음"))
             cur = state.get("current_file", "")
             self._set_session_text(f"세션 상태: {status}" + (f" / 마지막 파일: {cur}" if cur else ""))
@@ -1259,6 +1279,25 @@ class TranscribeGUI(QWidget):
         parent = os.path.dirname(mp3_path)
         return [os.path.join(parent, base + ".txt"), os.path.join(parent, base + ".json"), os.path.join(parent, base + ".srt")]
 
+    def _output_triplet_looks_complete(self, mp3_path: str) -> bool:
+        txt_path, json_path, srt_path = self._output_triplet(mp3_path)
+        for path in (txt_path, json_path, srt_path):
+            if not os.path.exists(path):
+                return False
+            try:
+                if os.path.getsize(path) <= 0:
+                    return False
+            except OSError:
+                return False
+        try:
+            with open(json_path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                return False
+        except Exception:
+            return False
+        return True
+
     def count_target_mp3_files(self) -> int:
         if not self.target_folder or not os.path.isdir(self.target_folder):
             return 0
@@ -1267,8 +1306,7 @@ class TranscribeGUI(QWidget):
             if not name.lower().endswith(".mp3"):
                 continue
             mp3_path = os.path.join(self.target_folder, name)
-            outs = self._output_triplet(mp3_path)
-            if not all(os.path.exists(p) for p in outs):
+            if not self._output_triplet_looks_complete(mp3_path):
                 count += 1
         return count
 
@@ -1281,6 +1319,7 @@ class TranscribeGUI(QWidget):
         self.total_target_mp3_files = self.count_target_mp3_files()
         self.stop_requested = False
         self.pending_kill = False
+        self.stop_terminate_sent = False
         self.last_current_percent = 0
         self.current_file_name = ""
         self.current_file_started_at = None
@@ -1428,17 +1467,28 @@ class TranscribeGUI(QWidget):
         parts = body.split("|")
         evt, payload = parts[0], parts[1:]
         if evt == "TOTAL_FILES":
-            self.total_target_mp3_files = int(payload[0]) if payload else 0
+            discovered = int(payload[0]) if len(payload) >= 1 and payload[0].isdigit() else 0
+            skipped = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
+            target = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else 0
+            self.total_target_mp3_files = target
+            self.append_log_text(f"[GUI] 발견된 전체 mp3 수: {discovered}\n")
+            self.append_log_text(f"[GUI] 기존 결과물 존재로 스킵할 파일 수: {skipped}\n")
+            self.append_log_text(f"[GUI] 이번 실행 실제 처리 대상 수: {target}\n")
             self.update_total_progress_display()
             self.update_eta_labels(initial=True)
             if self.total_target_mp3_files <= 0:
                 self.label_status.setText("현재 상태: 이번 실행에서 처리할 파일이 없습니다")
         elif evt == "FILE_INDEX":
+            cur_idx = int(payload[0]) if len(payload) >= 1 and payload[0].isdigit() else 0
+            total = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else self.total_target_mp3_files
             name = payload[2] if len(payload) >= 3 else "알 수 없음"
             self.current_file_name = name
             self.current_file_started_at = time.time()
             self.current_eta_seconds = None
-            self.label_status.setText("현재 상태: 전사 진행 중")
+            if total > 0 and cur_idx > 0:
+                self.label_status.setText(f"현재 상태: 전사 진행 중 ({cur_idx}/{total})")
+            else:
+                self.label_status.setText("현재 상태: 전사 진행 중")
             self.label_current_file.setText(f"현재 처리 중 파일: {name}")
             self.update_current_file_progress(0, force=True)
             self._set_eta_value(self.label_current_eta, "계산 중...")
@@ -1467,7 +1517,7 @@ class TranscribeGUI(QWidget):
             name = payload[0] if payload else "알 수 없음"
             self.label_status.setText(f"현재 상태: 기존 결과 존재로 건너뜀 ({name})")
         elif evt == "STOPPED":
-            self.label_status.setText("현재 상태: 중지됨")
+            self.label_status.setText("현재 상태: 사용자 중지 요청 감지")
         elif evt == "ALL_STOPPED":
             self.label_status.setText("현재 상태: 즉시 중지 완료")
             self.label_current_file.setText("현재 처리 중 파일: 없음")
@@ -1494,6 +1544,12 @@ class TranscribeGUI(QWidget):
         elif evt == "PREVIOUS_SESSION_CRASHED":
             self.append_log_text("[GUI] 이전 작업 비정상 종료 흔적 감지\n")
             self.update_session_label()
+        elif evt == "PREVIOUS_SESSION_STOPPED_BY_USER":
+            self.append_log_text("[GUI] 이전 작업 사용자 중지 이력 감지\n")
+            self.update_session_label()
+        elif evt == "PREVIOUS_SESSION_CORRUPT":
+            self.append_log_text("[GUI] 이전 세션 파일 손상 감지\n")
+            self.update_session_label()
         return True
 
     def run_transcribe_process(self):
@@ -1515,7 +1571,6 @@ class TranscribeGUI(QWidget):
             self._set_eta_value(self.label_current_eta, ETA_EMPTY_TEXT)
             QMessageBox.information(self, "알림", "이번 실행에서 처리할 파일이 없습니다.")
             return
-        self.clear_old_stop_flag()
         self.prepare_progress_tracking()
         self.set_transcribe_buttons_enabled(False)
         self.update_session_label()
@@ -1542,20 +1597,29 @@ class TranscribeGUI(QWidget):
                 self.append_log_text(tail + "\n")
                 setattr(self, name, "")
         self.force_kill_timer.stop()
-        self.append_log_text(f"[GUI] 프로세스 종료: exit_code={exit_code}, normal={exit_status == QProcess.NormalExit}\n")
+        normal_exit = exit_status == QProcess.NormalExit
+        self.append_log_text(f"[GUI] 프로세스 종료: exit_code={exit_code}, normal={normal_exit}\n")
         self.process = None
         self.set_transcribe_buttons_enabled(True)
         self.update_session_label()
+        if self.stop_requested:
+            if self.pending_kill:
+                self.label_status.setText("현재 상태: 사용자 중지(강제 종료)")
+            else:
+                self.label_status.setText("현재 상태: 사용자 중지 완료")
+            self.append_log_text("[INFO] 사용자 중지 상태로 종료 처리 완료\n")
+            self.pending_kill = False
+            self.stop_terminate_sent = False
+            self.stop_requested = False
+            return
         if self.pending_kill:
             self.label_status.setText("현재 상태: 강제 종료됨")
             self.pending_kill = False
-            return
-        if self.stop_requested:
-            self.label_status.setText("현재 상태: 중지 완료")
-            self.stop_requested = False
+            self.stop_terminate_sent = False
             return
         if exit_code != 0 and exit_status == QProcess.NormalExit:
             self.label_status.setText("현재 상태: 오류로 종료")
+        self.stop_terminate_sent = False
 
     def request_immediate_stop(self):
         if self.process is None or self.process.state() == QProcess.NotRunning:
@@ -1569,17 +1633,26 @@ class TranscribeGUI(QWidget):
             with open(stop_flag, "w", encoding="utf-8") as f:
                 f.write("stop\n")
             self.stop_requested = True
+            self.pending_kill = False
+            self.stop_terminate_sent = False
             self.label_status.setText("현재 상태: 중지 요청됨")
+            self.append_log_text("[INFO] 사용자 즉시 중지 요청 감지\n")
             self.append_log_text("[GUI] stop.flag 생성 완료 - 즉시 중지 요청\n")
-            self.force_kill_timer.start(10000)
+            if self.process is not None and self.process.state() != QProcess.NotRunning:
+                self.append_log_text("[WARN] 사용자 중지 요청 후 정상 종료 지연 - terminate 시도\n")
+                self.stop_terminate_sent = True
+                self.process.terminate()
+                self.force_kill_timer.start(8000)
         except Exception as e:
             QMessageBox.critical(self, "오류", f"중지 요청 실패\n\n{e}")
 
     def force_kill_process(self):
         if self.process is None or self.process.state() == QProcess.NotRunning:
             return
+        if not self.stop_requested:
+            return
         self.pending_kill = True
-        self.append_log_text("[GUI] terminate 후 종료되지 않아 kill() 실행\n")
+        self.append_log_text("[WARN] 사용자 중지 요청 후 terminate 실패 - kill 실행\n")
         self.process.kill()
 
     def shutdown_computer(self):

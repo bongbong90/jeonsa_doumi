@@ -12,6 +12,8 @@ import locale
 import json
 import re
 import traceback
+import stat
+from json import JSONDecodeError
 
 try:
     sys.stdout.reconfigure(encoding="utf-8")
@@ -23,10 +25,20 @@ MODEL_SIZE = "medium"
 SUPPORTED_EXTENSIONS = (".mp3", ".MP3")
 SESSION_STATE_FILENAME = "transcribe_session_state.json"
 STOP_FLAG_FILENAME = "stop.flag"
+SESSION_SAVE_RETRY_COUNT = 5
+SESSION_SAVE_BACKOFF_SECONDS = (0.2, 0.3, 0.4, 0.5, 0.5)
+SESSION_SOURCE_WORKER = "worker"
+
+STATUS_RUNNING = "running"
+STATUS_COMPLETED = "completed"
+STATUS_STOPPED_BY_USER = "stopped_by_user"
+STATUS_CRASHED = "crashed"
+STATUS_CORRUPT = "corrupt_session"
 
 SESSION_STATE_PATH = None
 STOP_FLAG_PATH = None
 _whisper_model = None
+RUN_COMPLETED_FILES: set[str] = set()
 
 
 # --------------------------------------------------
@@ -55,11 +67,125 @@ def init_runtime_paths(target_folder: str):
     STOP_FLAG_PATH = os.path.join(parent_dir, STOP_FLAG_FILENAME)
 
 
-def safe_json_dump(path: str, data: dict):
-    tmp_path = path + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-    os.replace(tmp_path, path)
+def _normalize_audio_path(path: str) -> str:
+    return os.path.normcase(os.path.abspath(path))
+
+
+def _is_access_denied_error(exc: BaseException) -> bool:
+    if isinstance(exc, PermissionError):
+        return True
+    if isinstance(exc, OSError):
+        return getattr(exc, "winerror", None) == 5
+    return False
+
+
+def _ensure_writable(path: str):
+    if not os.path.exists(path):
+        return
+    try:
+        mode = os.stat(path).st_mode
+        if not (mode & stat.S_IWRITE):
+            os.chmod(path, mode | stat.S_IWRITE)
+    except Exception as e:
+        log(f"[WARN] 세션 파일 속성 복구 실패: {path} ({type(e).__name__}: {e})")
+
+
+def _session_tmp_path(path: str) -> str:
+    return path + ".tmp"
+
+
+def cleanup_stale_session_tmp_files(session_dir: str):
+    if not session_dir:
+        return
+    tmp_path = os.path.join(session_dir, SESSION_STATE_FILENAME + ".tmp")
+    if not os.path.exists(tmp_path):
+        return
+    try:
+        age = max(0.0, time.time() - os.path.getmtime(tmp_path))
+    except Exception:
+        age = -1.0
+    try:
+        os.remove(tmp_path)
+        if age >= 0:
+            log(f"[INFO] 오래된 세션 tmp 파일 정리 완료: {tmp_path} (age={age:.1f}s)")
+        else:
+            log(f"[INFO] 오래된 세션 tmp 파일 정리 완료: {tmp_path}")
+    except Exception as e:
+        log(f"[WARN] 세션 tmp 파일 정리 실패: {tmp_path} ({type(e).__name__}: {e})")
+
+
+def load_session_state_safely(path: str) -> tuple[dict | None, str | None]:
+    if not path or not os.path.exists(path):
+        return None, None
+    try:
+        with open(path, "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return None, "session state is not dict"
+        return data, None
+    except (JSONDecodeError, UnicodeDecodeError) as e:
+        return None, f"{type(e).__name__}: {e}"
+    except Exception as e:
+        return None, f"{type(e).__name__}: {e}"
+
+
+def save_session_state_safely(state: dict, path: str, source: str = SESSION_SOURCE_WORKER) -> bool:
+    if not path:
+        return False
+
+    tmp_path = _session_tmp_path(path)
+    retries = max(SESSION_SAVE_RETRY_COUNT, 5)
+    parent_dir = os.path.dirname(path) or "."
+    os.makedirs(parent_dir, exist_ok=True)
+
+    for attempt in range(1, retries + 1):
+        try:
+            _ensure_writable(path)
+            _ensure_writable(tmp_path)
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False, indent=2)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp_path, path)
+            if attempt > 1:
+                log(
+                    f"[INFO] 세션 상태 저장 재시도 성공 ({attempt}/{retries}): "
+                    f"target={path}, tmp={tmp_path}, source={source}"
+                )
+            return True
+        except Exception as e:
+            err_type = type(e).__name__
+            retriable = _is_access_denied_error(e) or isinstance(e, OSError)
+            if retriable and attempt < retries:
+                wait = SESSION_SAVE_BACKOFF_SECONDS[min(attempt - 1, len(SESSION_SAVE_BACKOFF_SECONDS) - 1)]
+                log(
+                    f"[WARN] 세션 상태 저장 실패 {attempt}/{retries}회, 재시도 예정: "
+                    f"{err_type} {e} | target={path} | tmp={tmp_path} | source={source}"
+                )
+                time.sleep(wait)
+                continue
+            log(
+                f"[ERROR] 세션 상태 저장 최종 실패 ({attempt}/{retries}): "
+                f"{err_type} {e} | target={path} | tmp={tmp_path} | source={source}"
+            )
+            return False
+    return False
+
+
+def _restore_completed_files_from_state(state: dict | None, target_folder: str):
+    global RUN_COMPLETED_FILES
+    if not state:
+        RUN_COMPLETED_FILES = set()
+        return
+    target_norm = _normalize_audio_path(target_folder)
+    restored: set[str] = set()
+    for raw in state.get("completed_files", []) or []:
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        norm = _normalize_audio_path(raw)
+        if norm.startswith(target_norm + os.sep) or norm == target_norm:
+            restored.add(norm)
+    RUN_COMPLETED_FILES = restored
 
 
 def update_session_state(status: str, current_file: str = "", extra: dict | None = None):
@@ -70,39 +196,68 @@ def update_session_state(status: str, current_file: str = "", extra: dict | None
         "status": status,
         "current_file": current_file,
         "updated_at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "completed_files": sorted(RUN_COMPLETED_FILES),
     }
     if extra:
         payload.update(extra)
 
-    try:
-        safe_json_dump(SESSION_STATE_PATH, payload)
-    except Exception as e:
-        log(f"[WARN] 세션 상태 저장 실패: {e}")
+    save_session_state_safely(payload, SESSION_STATE_PATH, source=SESSION_SOURCE_WORKER)
 
 
-def detect_previous_crash():
-    if not SESSION_STATE_PATH or not os.path.exists(SESSION_STATE_PATH):
+def detect_previous_session_state(target_folder: str):
+    if not SESSION_STATE_PATH:
         return
 
-    try:
-        with open(SESSION_STATE_PATH, "r", encoding="utf-8") as f:
-            state = json.load(f)
+    state, err = load_session_state_safely(SESSION_STATE_PATH)
+    if err:
+        log(f"[WARN] 이전 세션 상태 파일 손상 또는 읽기 실패: {err}")
+        emit_event("PREVIOUS_SESSION_CORRUPT")
+        _restore_completed_files_from_state(None, target_folder)
+        update_session_state(STATUS_CORRUPT, "", {"last_session_error": err})
+        return
 
-        if state.get("status") == "running":
+    _restore_completed_files_from_state(state, target_folder)
+    if not state:
+        return
+
+    status = str(state.get("status", "") or "").strip().lower()
+    current_file = str(state.get("current_file", "") or "")
+    has_stop_flag = bool(STOP_FLAG_PATH and os.path.exists(STOP_FLAG_PATH))
+
+    if status == STATUS_RUNNING:
+        if has_stop_flag:
+            log("[INFO] 이전 작업 사용자 중지 흔적 감지 (running + stop.flag)")
+            emit_event("PREVIOUS_SESSION_STOPPED_BY_USER")
+            update_session_state(STATUS_STOPPED_BY_USER, current_file, {"previous_status": STATUS_RUNNING})
+        else:
             log("[WARN] 이전 작업 비정상 종료 흔적 감지")
             emit_event("PREVIOUS_SESSION_CRASHED")
-            update_session_state("crashed", state.get("current_file", ""))
+            update_session_state(STATUS_CRASHED, current_file, {"previous_status": STATUS_RUNNING})
+        return
 
-    except Exception as e:
-        log(f"[WARN] 이전 세션 상태 확인 실패: {e}")
+    if status in ("stopped", STATUS_STOPPED_BY_USER):
+        log("[INFO] 이전 작업 사용자 중지 이력 감지")
+        emit_event("PREVIOUS_SESSION_STOPPED_BY_USER")
+        if status != STATUS_STOPPED_BY_USER:
+            update_session_state(STATUS_STOPPED_BY_USER, current_file, {"previous_status": status})
+        return
+
+    if status == STATUS_CRASHED:
+        emit_event("PREVIOUS_SESSION_CRASHED")
+        return
+
+    if status == STATUS_CORRUPT:
+        emit_event("PREVIOUS_SESSION_CORRUPT")
 
 
 def clear_old_stop_flag():
     if STOP_FLAG_PATH and os.path.exists(STOP_FLAG_PATH):
         try:
+            age = max(0.0, time.time() - os.path.getmtime(STOP_FLAG_PATH))
             os.remove(STOP_FLAG_PATH)
+            log(f"[INFO] 오래된 stop.flag 정리 완료: {STOP_FLAG_PATH} (age={age:.1f}s)")
         except Exception as e:
-            log(f"[WARN] 이전 stop.flag 삭제 실패: {e}")
+            log(f"[WARN] 이전 stop.flag 정리 실패: {type(e).__name__}: {e}")
 
 
 def stop_requested() -> bool:
@@ -123,7 +278,6 @@ def remove_page_suffix(filename: str) -> str:
     """
     name, ext = os.path.splitext(filename)
 
-    # 끝의 페이지 표기 제거
     name = re.sub(
         r"\s*\(\s*p\.?[\s+]*\d+[\s+]*(?:~[\s+]*\d*[\s+]*)?\)\s*$",
         "",
@@ -131,27 +285,13 @@ def remove_page_suffix(filename: str) -> str:
         flags=re.IGNORECASE,
     )
 
-    # + 기호를 공백으로 변환
     name = name.replace("+", " ")
-
-    # 연속 공백 정리
     name = re.sub(r"\s+", " ", name)
 
     return name.strip() + ext
 
 
 def get_clean_base_name(audio_path: str) -> str:
-    """
-    파일명 정리 규칙:
-    1) basename 추출
-    2) 끝 페이지 표기 제거
-    3) 확장자 제거
-    4) 중간의 점(.)은 유지
-
-    예:
-    21강_[6주차]_26_02_09_[교재] 2. 포상금 제도.mp3
-    -> 21강_[6주차]_26_02_09_[교재] 2. 포상금 제도
-    """
     original_name = os.path.basename(audio_path)
     cleaned_name = remove_page_suffix(original_name)
     base_name = os.path.splitext(cleaned_name)[0]
@@ -169,9 +309,34 @@ def get_output_paths(audio_path: str) -> dict:
     }
 
 
-def all_output_files_exist(audio_path: str) -> bool:
+def output_files_look_complete(audio_path: str) -> bool:
     paths = get_output_paths(audio_path)
-    return all(os.path.exists(p) for p in paths.values())
+    for p in paths.values():
+        if not os.path.exists(p):
+            return False
+        try:
+            if os.path.getsize(p) <= 0:
+                return False
+        except OSError:
+            return False
+
+    # json이 손상되어 있으면 완료로 보지 않는다.
+    try:
+        with open(paths["json"], "r", encoding="utf-8-sig") as f:
+            data = json.load(f)
+        if not isinstance(data, dict):
+            return False
+    except Exception:
+        return False
+
+    return True
+
+
+def is_audio_completed(audio_path: str) -> bool:
+    normalized = _normalize_audio_path(audio_path)
+    if normalized in RUN_COMPLETED_FILES and output_files_look_complete(audio_path):
+        return True
+    return output_files_look_complete(audio_path)
 
 
 # --------------------------------------------------
@@ -183,8 +348,9 @@ def load_whisper_model():
     if _whisper_model is not None:
         return _whisper_model
 
-    log(f"[*] Whisper '{MODEL_SIZE}' 모델 로드 중... (최초 로딩 시 시간이 다소 소요될 수 있습니다)")
+    log(f"[*] Whisper '{MODEL_SIZE}' 모델 로드 중.. (최초 로딩 시 시간이 다소 필요할 수 있습니다)")
     import whisper
+
     _whisper_model = whisper.load_model(MODEL_SIZE)
     log("[*] 모델 로드 완료.")
     return _whisper_model
@@ -245,16 +411,39 @@ def save_result_files(audio_path: str, result: dict):
 # --------------------------------------------------
 # 전사
 # --------------------------------------------------
-def transcribe_one_file(audio_path: str):
-    model = load_whisper_model()
+def transcribe_one_file(audio_path: str, index: int, total_files: int):
     file_name = os.path.basename(audio_path)
+
+    if stop_requested():
+        log("[INFO] stop.flag 감지 - 현재 파일 처리 중단 준비")
+        emit_event("STOPPED", file_name)
+        update_session_state(
+            STATUS_STOPPED_BY_USER,
+            file_name,
+            {
+                "stop_reason": "pre_file_start",
+                "current_index": index,
+                "target_files_total": total_files,
+                "completed_count": len(RUN_COMPLETED_FILES),
+            },
+        )
+        log("[INFO] 사용자 중지 상태로 세션 기록 완료")
+        return "stopped"
+
+    model = load_whisper_model()
 
     log(f"[RUNNING] '{file_name}' 전사 시작...")
     emit_event("START_FILE", file_name)
-    update_session_state("running", file_name)
+    update_session_state(
+        STATUS_RUNNING,
+        file_name,
+        {
+            "current_index": index,
+            "target_files_total": total_files,
+            "completed_count": len(RUN_COMPLETED_FILES),
+        },
+    )
 
-    # 원래 흐름 최대한 유지:
-    # verbose=False / fp16=False / language='ko'
     # progress_callback 같은 미지원 인자는 사용하지 않음
     result = model.transcribe(
         audio_path,
@@ -264,15 +453,36 @@ def transcribe_one_file(audio_path: str):
     )
 
     if stop_requested():
-        log(f"[STOP] '{file_name}' 저장 전 중지 요청 감지")
+        log(f"[INFO] stop.flag 감지 - '{file_name}' 결과 저장 전 사용자 중지 요청 확인")
         emit_event("STOPPED", file_name)
-        update_session_state("stopped", file_name)
+        update_session_state(
+            STATUS_STOPPED_BY_USER,
+            file_name,
+            {
+                "stop_reason": "after_transcribe_before_save",
+                "current_index": index,
+                "target_files_total": total_files,
+                "completed_count": len(RUN_COMPLETED_FILES),
+            },
+        )
+        log("[INFO] 사용자 중지 상태로 세션 기록 완료")
         return "stopped"
 
     save_result_files(audio_path, result)
 
     log(f"[DONE] '{file_name}' 전사 완료")
+    RUN_COMPLETED_FILES.add(_normalize_audio_path(audio_path))
     emit_event("FILE_DONE", file_name)
+    update_session_state(
+        STATUS_RUNNING,
+        "",
+        {
+            "last_done_file": file_name,
+            "current_index": index,
+            "target_files_total": total_files,
+            "completed_count": len(RUN_COMPLETED_FILES),
+        },
+    )
     return "done"
 
 
@@ -294,77 +504,143 @@ def process_folder(target_folder: str):
         raise FileNotFoundError(f"전사자료 폴더를 찾을 수 없습니다: {abs_target}")
 
     init_runtime_paths(abs_target)
-    detect_previous_crash()
+    cleanup_stale_session_tmp_files(os.path.dirname(abs_target))
+    detect_previous_session_state(abs_target)
     clear_old_stop_flag()
 
     log(f"[DEBUG] 실행 파일: {os.path.abspath(__file__)}")
     log("=" * 60)
     log(f"시작 시간: {datetime.datetime.now().strftime('%Y년 %m월 %d일 %H시 %M분 %S초')}")
-    log(f"처리할 입력 경로: ['{abs_target}']")
+    log(f"처리 대상 입력 경로: ['{abs_target}']")
     log("-" * 60)
     log(f"[INFO] 폴더 처리 시작: '{abs_target}'")
 
     mp3_files = find_mp3_files(abs_target)
-    actual_target_files = [
-        audio_path for audio_path in mp3_files if not all_output_files_exist(audio_path)
-    ]
-    log(f"[DEBUG] 발견된 mp3 수: {len(mp3_files)}")
-    emit_event("TOTAL_FILES", len(actual_target_files), len(actual_target_files))
+
+    skip_files: list[str] = []
+    actual_target_files: list[str] = []
+    for audio_path in mp3_files:
+        if is_audio_completed(audio_path):
+            skip_files.append(audio_path)
+        else:
+            actual_target_files.append(audio_path)
+
+    log(f"[DEBUG] 발견된 전체 mp3 수: {len(mp3_files)}")
+    log(f"[DEBUG] 기존 결과물 존재로 스킵할 파일 수: {len(skip_files)}")
+    log(f"[DEBUG] 이번 실행 실제 처리 대상 수: {len(actual_target_files)}")
+    emit_event("TOTAL_FILES", len(mp3_files), len(skip_files), len(actual_target_files))
 
     if not mp3_files:
         log(f"[] '{abs_target}' 에서 처리할 MP3 파일을 찾지 못했습니다.")
-        update_session_state("completed", "")
+        update_session_state(STATUS_COMPLETED, "", {"total_discovered_files": 0, "target_files_total": 0})
         emit_event("ALL_DONE")
         return
 
     if not actual_target_files:
         log("[INFO] 이번 실행에서 처리할 파일이 없습니다.")
-        update_session_state("completed", "")
+        update_session_state(
+            STATUS_COMPLETED,
+            "",
+            {
+                "total_discovered_files": len(mp3_files),
+                "skipped_files": len(skip_files),
+                "target_files_total": 0,
+                "completed_count": len(RUN_COMPLETED_FILES),
+            },
+        )
         emit_event("ALL_DONE")
         return
 
-    update_session_state("running", "")
-
     total_files = len(actual_target_files)
+    update_session_state(
+        STATUS_RUNNING,
+        "",
+        {
+            "total_discovered_files": len(mp3_files),
+            "skipped_files": len(skip_files),
+            "target_files_total": total_files,
+            "completed_count": len(RUN_COMPLETED_FILES),
+        },
+    )
 
     for idx, audio_path in enumerate(actual_target_files, start=1):
         file_name = os.path.basename(audio_path)
 
         if stop_requested():
-            log("[STOP] stop.flag 감지 - 작업을 중지합니다.")
-            update_session_state("stopped", file_name)
+            log("[INFO] 사용자 즉시 중지 요청 감지")
+            log("[INFO] stop.flag 감지 - 현재 파일 처리 중단 준비")
+            update_session_state(
+                STATUS_STOPPED_BY_USER,
+                file_name,
+                {
+                    "stop_reason": "before_file_loop",
+                    "current_index": idx,
+                    "target_files_total": total_files,
+                    "completed_count": len(RUN_COMPLETED_FILES),
+                },
+            )
             emit_event("STOPPED", file_name)
             emit_event("ALL_STOPPED")
+            log("[INFO] 사용자 중지 상태로 세션 기록 완료")
             return
 
         emit_event("FILE_INDEX", idx, total_files, file_name)
+        log(f"[PROGRESS] {idx} / {total_files} | {file_name}")
 
         try:
-            if all_output_files_exist(audio_path):
+            if is_audio_completed(audio_path):
                 log(f"[SKIP] '{file_name}' (이미 전사 완료)")
                 emit_event("FILE_SKIP", file_name)
                 continue
 
-            result = transcribe_one_file(audio_path)
-
+            result = transcribe_one_file(audio_path, idx, total_files)
             if result == "stopped":
                 emit_event("ALL_STOPPED")
                 return
 
         except KeyboardInterrupt:
-            log("[STOP] KeyboardInterrupt 감지 - 작업 중지")
-            update_session_state("stopped", file_name)
+            log("[INFO] 사용자 즉시 중지 요청 감지 (KeyboardInterrupt)")
+            update_session_state(
+                STATUS_STOPPED_BY_USER,
+                file_name,
+                {
+                    "stop_reason": "keyboard_interrupt",
+                    "current_index": idx,
+                    "target_files_total": total_files,
+                    "completed_count": len(RUN_COMPLETED_FILES),
+                },
+            )
             emit_event("STOPPED", file_name)
             emit_event("ALL_STOPPED")
+            log("[INFO] 사용자 중지 상태로 세션 기록 완료")
             return
 
         except Exception as e:
             log(f"[FAIL] '{file_name}' 처리 중 오류 발생:")
             log(str(e))
             emit_event("FILE_FAIL", file_name, str(e))
-            update_session_state("running", file_name, {"last_error": str(e)})
+            update_session_state(
+                STATUS_RUNNING,
+                file_name,
+                {
+                    "last_error": str(e),
+                    "error_type": type(e).__name__,
+                    "current_index": idx,
+                    "target_files_total": total_files,
+                    "completed_count": len(RUN_COMPLETED_FILES),
+                },
+            )
 
-    update_session_state("completed", "")
+    update_session_state(
+        STATUS_COMPLETED,
+        "",
+        {
+            "total_discovered_files": len(mp3_files),
+            "skipped_files": len(skip_files),
+            "target_files_total": total_files,
+            "completed_count": len(RUN_COMPLETED_FILES),
+        },
+    )
     emit_event("ALL_DONE")
 
     log("")
@@ -396,7 +672,7 @@ def main():
         traceback.print_exc()
 
         if SESSION_STATE_PATH is not None:
-            update_session_state("crashed", "", {"fatal_error": str(e)})
+            update_session_state(STATUS_CRASHED, "", {"fatal_error": str(e), "error_type": type(e).__name__})
 
         emit_event("PROCESS_CRASHED", str(e))
         sys.exit(1)
