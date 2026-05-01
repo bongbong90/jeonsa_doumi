@@ -386,8 +386,8 @@ class TranscribeGUI(QWidget):
         super().__init__()
         self.setObjectName("RootWindow")
         self.setWindowTitle(APP_DISPLAY_NAME)
-        self.resize(1240, 760)
-        self.setMinimumSize(960, 620)
+        self.resize(1380, 860)
+        self.setMinimumSize(1100, 700)
 
         self.download_folder = ""
         self.target_folder = ""
@@ -436,37 +436,47 @@ class TranscribeGUI(QWidget):
 
     def build_ui(self):
         root = QHBoxLayout(self)
-        root.setContentsMargins(10, 10, 10, 10)
-        root.setSpacing(10)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(16)
 
-        left = QVBoxLayout()
-        right = QVBoxLayout()
-        left.setSpacing(10)
-        right.setSpacing(10)
-        root.addLayout(left, 30)
-        root.addLayout(right, 70)
+        sidebar = QFrame()
+        sidebar.setObjectName("SidebarPane")
+        sidebar.setFixedWidth(340)
+        left = QVBoxLayout(sidebar)
+        left.setContentsMargins(14, 14, 14, 14)
+        left.setSpacing(12)
+
+        mainpane = QFrame()
+        mainpane.setObjectName("MainPane")
+        right = QVBoxLayout(mainpane)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.setSpacing(12)
+
+        root.addWidget(sidebar, 0)
+        root.addWidget(mainpane, 1)
 
         title = QFrame()
         title.setObjectName("TitleCard")
         title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         tbox = QVBoxLayout(title)
-        tbox.setContentsMargins(18, 18, 18, 14)
-        tbox.setSpacing(4)
-        self.label_title_text = QLabel("MP3 전사도우미", objectName="TitleText")
-        self.label_title_text.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self.label_title_hint = QLabel("폴더 선택 -> 파일 준비 -> 전사 시작", objectName="TitleHint")
-        self.label_title_hint.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        tbox.setContentsMargins(16, 14, 16, 14)
+        tbox.setSpacing(2)
+        self.label_title_text = QLabel("전사도우미", objectName="TitleText")
+        self.label_title_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.label_title_hint = QLabel("CONFIGURATION & LOGS", objectName="TitleHint")
+        self.label_title_hint.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         tbox.addWidget(self.label_title_text)
         tbox.addWidget(self.label_title_hint)
         left.addWidget(title)
         self.group_title = title
 
-        settings = QGroupBox("설정 및 옵션")
+        settings = QGroupBox("Folder Settings")
+        settings.setObjectName("SidebarSection")
         settings.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         sbox = QVBoxLayout(settings)
-        sbox.setContentsMargins(12, 13, 12, 12)
-        sbox.setSpacing(6)
-        self.label_settings_hint = QLabel("전사 전에 사용할 폴더를 먼저 지정하세요.", objectName="SideHelperText")
+        sbox.setContentsMargins(14, 16, 14, 14)
+        sbox.setSpacing(8)
+        self.label_settings_hint = QLabel("전사 전에 사용할 폴더와 로그 설정을 먼저 지정하세요.", objectName="SideHelperText")
         self.label_settings_hint.setWordWrap(False)
         sbox.addWidget(self.label_settings_hint)
 
@@ -494,13 +504,14 @@ class TranscribeGUI(QWidget):
         left.addWidget(settings)
         self.group_settings = settings
 
-        options = QGroupBox("알림 및 종료 옵션")
+        options = QGroupBox("Options")
+        options.setObjectName("SidebarSection")
         options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         obox = QVBoxLayout(options)
-        obox.setContentsMargins(12, 13, 12, 10)
+        obox.setContentsMargins(14, 16, 14, 12)
         obox.setSpacing(6)
         self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
-        self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
+        self.chk_notify_total = QCheckBox("?? ?? ?? ??")
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
         self.chk_notify_each_file.setChecked(True)
         self.chk_notify_total.setChecked(True)
@@ -510,11 +521,11 @@ class TranscribeGUI(QWidget):
         left.addWidget(options)
         self.group_options = options
 
-        logs = QGroupBox("실행 로그")
+        logs = QGroupBox("Execution Log")
         logs.setObjectName("LogsSection")
         logs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lbox = QVBoxLayout(logs)
-        lbox.setContentsMargins(12, 15, 12, 12)
+        lbox.setContentsMargins(14, 16, 14, 12)
         lbox.setSpacing(9)
         self.btn_toggle_log = QPushButton("로그창 보기")
         self.btn_toggle_log.setProperty("uiRole", "logToggle")
@@ -523,21 +534,23 @@ class TranscribeGUI(QWidget):
         self.log_viewer = QTextEdit()
         self.log_viewer.setObjectName("LogViewer")
         self.log_viewer.setReadOnly(True)
-        self.log_viewer.setPlaceholderText("전사 진행 로그가 여기에 표시됩니다.")
+        self.log_viewer.setPlaceholderText("[14:20:11] Session started.\\n[14:21:05] Audio engine initialized.")
         self.log_viewer.setMinimumHeight(0)
         self.log_viewer.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.log_viewer.setLineWrapMode(QTextEdit.WidgetWidth)
         self.log_viewer.setWordWrapMode(QTextOption.WrapAnywhere)
-        self.log_viewer.document().setDocumentMargin(10)
+        self.log_viewer.document().setDocumentMargin(12)
         self.log_viewer.hide()
         lbox.addWidget(self.log_viewer)
         left.addWidget(logs, 1)
         self.group_logs = logs
 
         dashboard = QGroupBox("진행 대시보드")
+        dashboard.setObjectName("DashboardSection")
         dbox = QVBoxLayout(dashboard)
-        dbox.setContentsMargins(14, 14, 14, 12)
-        dbox.setSpacing(7)
+        dbox.setContentsMargins(14, 14, 14, 14)
+        dbox.setSpacing(10)
+
         self.label_status = QLabel("")
         self.label_status.setObjectName("StatusPrimary")
         self.label_status.setWordWrap(False)
@@ -550,16 +563,7 @@ class TranscribeGUI(QWidget):
         self.label_output_source = QLabel("")
         self.label_output_source.setObjectName("MetaStatus")
         self.label_output_source.setWordWrap(False)
-        dbox.addWidget(self.label_status)
-        dbox.addWidget(self.label_current_file)
-        dbox.addWidget(self.label_session)
-        dbox.addWidget(self.label_output_source)
-        dbox.addSpacing(2)
 
-        grid = QGridLayout()
-        grid.setContentsMargins(0, 2, 0, 0)
-        grid.setHorizontalSpacing(14)
-        grid.setVerticalSpacing(8)
         self.label_total_progress_text = QLabel("0 / 0")
         self.label_total_progress_text.setObjectName("MetricValue")
         self.total_progress_bar = QProgressBar()
@@ -572,57 +576,86 @@ class TranscribeGUI(QWidget):
         self.current_progress_bar.setRange(0, 100)
         self.label_current_eta = QLabel(ETA_EMPTY_TEXT)
         self.label_current_eta.setObjectName("MetricValue")
-        self.label_total_progress_text.setWordWrap(True)
-        self.label_total_eta.setWordWrap(False)
-        self.label_current_progress_text.setWordWrap(True)
-        self.label_current_eta.setWordWrap(False)
-        self.label_total_progress_text.setMinimumHeight(28)
-        self.label_total_eta.setMinimumHeight(28)
-        self.label_current_progress_text.setMinimumHeight(28)
-        self.label_current_eta.setMinimumHeight(28)
-        self.label_total_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.label_total_eta.setAlignment(Qt.AlignCenter)
-        self.label_current_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.label_current_eta.setAlignment(Qt.AlignCenter)
-        self.label_total_eta.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.label_current_eta.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.label_total_eta.setIndent(0)
-        self.label_current_eta.setIndent(0)
 
-        total_label = QLabel("전체 진행률")
-        total_label.setObjectName("MetricTitle")
-        grid.addWidget(total_label, 0, 0)
-        grid.addWidget(self.label_total_progress_text, 1, 0)
-        grid.addWidget(self.total_progress_bar, 2, 0)
-        total_eta_label = QLabel("전체 작업 남은 시간")
-        total_eta_label.setObjectName("MetricTitle")
-        grid.addWidget(total_eta_label, 0, 1)
-        grid.addWidget(self.label_total_eta, 1, 1, 2, 1)
-        current_label = QLabel("현재 파일 진행률")
-        current_label.setObjectName("MetricTitle")
-        grid.addWidget(current_label, 0, 2)
-        grid.addWidget(self.label_current_progress_text, 1, 2)
-        grid.addWidget(self.current_progress_bar, 2, 2)
-        current_eta_label = QLabel("현재 파일 남은 시간")
-        current_eta_label.setObjectName("MetricTitle")
-        grid.addWidget(current_eta_label, 0, 3)
-        grid.addWidget(self.label_current_eta, 1, 3, 2, 1)
-        grid.setColumnStretch(0, 2)
-        grid.setColumnStretch(1, 1)
-        grid.setColumnStretch(2, 2)
-        grid.setColumnStretch(3, 1)
-        dbox.addLayout(grid)
+        top_cards = QHBoxLayout()
+        top_cards.setSpacing(10)
+
+        card_status = QFrame()
+        card_status.setObjectName("DashboardCard")
+        card_status_box = QVBoxLayout(card_status)
+        card_status_box.setContentsMargins(14, 12, 14, 12)
+        card_status_box.setSpacing(4)
+        card_status_title = QLabel("CURRENT STATUS", objectName="DashboardMicroLabel")
+        card_status_box.addWidget(card_status_title)
+        card_status_box.addWidget(self.label_status)
+        top_cards.addWidget(card_status, 3)
+
+        card_progress = QFrame()
+        card_progress.setObjectName("DashboardCard")
+        card_progress_box = QVBoxLayout(card_progress)
+        card_progress_box.setContentsMargins(14, 12, 14, 12)
+        card_progress_box.setSpacing(6)
+        card_progress_title = QLabel("TOTAL PROGRESS", objectName="DashboardMicroLabel")
+        card_progress_box.addWidget(card_progress_title)
+        card_progress_box.addWidget(self.label_total_progress_text)
+        card_progress_box.addWidget(self.total_progress_bar)
+        top_cards.addWidget(card_progress, 4)
+
+        card_eta = QFrame()
+        card_eta.setObjectName("DashboardCard")
+        card_eta_box = QVBoxLayout(card_eta)
+        card_eta_box.setContentsMargins(14, 12, 14, 12)
+        card_eta_box.setSpacing(4)
+        card_eta_title = QLabel("REMAINING TIME", objectName="DashboardMicroLabel")
+        card_eta_box.addWidget(card_eta_title)
+        card_eta_box.addWidget(self.label_total_eta)
+        top_cards.addWidget(card_eta, 3)
+        dbox.addLayout(top_cards)
+
+        card_current = QFrame()
+        card_current.setObjectName("DashboardCard")
+        card_current_box = QVBoxLayout(card_current)
+        card_current_box.setContentsMargins(14, 12, 14, 12)
+        card_current_box.setSpacing(6)
+        card_current_title = QLabel("CURRENT FILE", objectName="DashboardMicroLabel")
+        card_current_box.addWidget(card_current_title)
+        card_current_box.addWidget(self.label_current_file)
+
+        current_row = QHBoxLayout()
+        current_row.setSpacing(12)
+        current_progress_col = QVBoxLayout()
+        current_progress_col.setSpacing(4)
+        current_progress_label = QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel")
+        current_progress_col.addWidget(current_progress_label)
+        current_progress_col.addWidget(self.label_current_progress_text)
+        current_progress_col.addWidget(self.current_progress_bar)
+        current_row.addLayout(current_progress_col, 3)
+
+        current_eta_col = QVBoxLayout()
+        current_eta_col.setSpacing(4)
+        current_eta_label = QLabel("CURRENT ETA", objectName="DashboardMicroLabel")
+        current_eta_col.addWidget(current_eta_label)
+        self.label_current_eta.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        current_eta_col.addWidget(self.label_current_eta)
+        current_eta_col.addStretch(1)
+        current_row.addLayout(current_eta_col, 1)
+        card_current_box.addLayout(current_row)
+        dbox.addWidget(card_current)
+
+        dbox.addWidget(self.label_session)
+        dbox.addWidget(self.label_output_source)
         right.addWidget(dashboard)
 
-        files = QGroupBox("MP3 파일 목록")
+        files = QGroupBox("MP3 ?? ??")
+        files.setObjectName("FileQueueSection")
         files.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         fbox = QVBoxLayout(files)
-        fbox.setContentsMargins(12, 13, 12, 12)
-        fbox.setSpacing(7)
+        fbox.setContentsMargins(14, 16, 14, 14)
+        fbox.setSpacing(8)
         self.label_file_count = QLabel("불러온 MP3 파일 수: 0개")
         self.label_file_count.setObjectName("SectionValue")
         fbox.addWidget(self.label_file_count)
-        self.label_files_helper = QLabel("선택한 파일을 이동하거나 현재 가져온 목록을 여기에서 확인할 수 있습니다.", objectName="HelperText")
+        self.label_files_helper = QLabel("여러 파일을 선택해 이동/전사를 빠르게 시작할 수 있습니다.", objectName="HelperText")
         fbox.addWidget(self.label_files_helper)
         self.file_list_widget = QListWidget()
         self.file_list_widget.setSelectionMode(QAbstractItemView.ExtendedSelection)
@@ -631,32 +664,35 @@ class TranscribeGUI(QWidget):
         self.file_list_widget.setTextElideMode(Qt.ElideMiddle)
         self.file_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.file_list_widget.setUniformItemSizes(True)
-        self.file_list_widget.setSpacing(2)
+        self.file_list_widget.setAlternatingRowColors(True)
+        self.file_list_widget.setSpacing(4)
         fbox.addWidget(self.file_list_widget, 1)
         right.addWidget(files, 1)
         self.group_files = files
 
-        controls = QGroupBox("실행 제어")
+        controls = QGroupBox("?? ??")
+        controls.setObjectName("ControlSection")
         controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         cbox = QVBoxLayout(controls)
+        cbox.setContentsMargins(14, 14, 14, 14)
         cbox.setSpacing(8)
         self.label_controls_helper = QLabel("시작 버튼으로 전사를 실행하고, 필요하면 즉시 중지할 수 있습니다.", objectName="HelperText")
         cbox.addWidget(self.label_controls_helper)
         row1 = QHBoxLayout()
         row1.setSpacing(8)
         self.btn_move_and_transcribe = QPushButton("선택한 MP3 이동 후 전사 시작")
-        self.btn_move_and_transcribe.setProperty("uiRole", "control")
+        self.btn_move_and_transcribe.setProperty("uiRole", "controlSecondary")
         self.btn_transcribe_target = QPushButton("전사자료 폴더 전체 전사 시작")
-        self.btn_transcribe_target.setProperty("uiRole", "control")
+        self.btn_transcribe_target.setProperty("uiRole", "controlPrimary")
         row1.addWidget(self.btn_move_and_transcribe)
         row1.addWidget(self.btn_transcribe_target)
         cbox.addLayout(row1)
         row2 = QHBoxLayout()
         row2.setSpacing(8)
         self.btn_move_files = QPushButton("선택한 MP3를 전사자료 폴더로 이동")
-        self.btn_move_files.setProperty("uiRole", "control")
-        self.btn_stop_now = QPushButton("즉시 중지")
-        self.btn_stop_now.setProperty("uiRole", "control")
+        self.btn_move_files.setProperty("uiRole", "controlGhost")
+        self.btn_stop_now = QPushButton("?? ??")
+        self.btn_stop_now.setProperty("uiRole", "controlDanger")
         self.btn_stop_now.setObjectName("Danger")
         self.btn_stop_now.setEnabled(False)
         row2.addWidget(self.btn_move_files, 1)
@@ -681,44 +717,61 @@ class TranscribeGUI(QWidget):
 
     def apply_styles(self):
         palette = {
-            "background": "#dbe3ed",
-            "panel": "#f1f5fa",
-            "panel_alt": "#edf2f8",
-            "panel_inner": "#e3ebf4",
-            "border": "rgba(109, 129, 156, 0.24)",
-            "divider": "rgba(109, 129, 156, 0.18)",
-            "title_text": "#24344a",
-            "section_text": "#2d3f57",
-            "body_text": "#243d58",
-            "muted_text": "#2b4d72",
-            "value_text": "#1f3148",
-            "metric_label_text": "#26486d",
-            "path_text": "#234566",
-            "log_text": "#29435f",
-            "button_text": "#223d5c",
-            "accent_button": "#d4e0ee",
-            "accent_button_hover": "#c8d7e9",
-            "button_disabled_bg": "#d8e0eb",
-            "button_disabled_border": "rgba(126, 144, 170, 0.28)",
-            "button_disabled_text": "#7488a3",
-            "danger_button": "#d8c3c8",
-            "danger_button_hover": "#cfb8bf",
-            "danger_border": "rgba(168, 124, 136, 0.30)",
-            "selected_row": "#bed0e5",
-            "progress_bg": "#ccd8e8",
-            "progress_border": "rgba(103, 126, 156, 0.38)",
-            "progress_chunk": "#7296c8",
-            "title_hint": "#536d8b",
+            "background": "#faf8ff",
+            "sidebar_bg": "#f4f3fa",
+            "main_bg": "#faf8ff",
+            "panel": "#ffffff",
+            "panel_alt": "#f7f8ff",
+            "panel_inner": "#eef1f8",
+            "border": "#d6dcea",
+            "divider": "#e7eaf2",
+            "title_text": "#00236f",
+            "section_text": "#1c2f53",
+            "body_text": "#1a1b21",
+            "muted_text": "#5a6478",
+            "value_text": "#0f235a",
+            "metric_label_text": "#5c6b86",
+            "path_text": "#2b3c61",
+            "log_bg": "#07153a",
+            "log_text": "#c8d8ff",
+            "log_accent": "#3de0bc",
+            "button_text": "#1f2f4d",
+            "accent_button": "#f4f6fd",
+            "accent_button_hover": "#e8edf9",
+            "button_disabled_bg": "#eceef5",
+            "button_disabled_border": "#d7dce7",
+            "button_disabled_text": "#9aa3b5",
+            "selected_row": "#dbe5ff",
+            "progress_bg": "#dae3f4",
+            "progress_border": "#c4d0e6",
+            "progress_chunk": "#002d8b",
+            "title_hint": "#5e6c89",
+            "danger_button": "#fff1f0",
+            "danger_button_hover": "#ffe5e1",
+            "danger_border": "#df7f74",
+            "primary_button": "#002d8b",
+            "primary_button_hover": "#183f9b",
+            "on_primary": "#ffffff",
+            "chip_bg": "#e7edfb",
         }
 
         self.setStyleSheet(
             f"""
             QWidget {{
                 color:{palette["body_text"]};
-                font-size:12px;
+                font-size:13px;
             }}
             QWidget#RootWindow {{
                 background:{palette["background"]};
+            }}
+            QFrame#SidebarPane {{
+                background:{palette["sidebar_bg"]};
+                border:1px solid {palette["border"]};
+                border-radius:14px;
+            }}
+            QFrame#MainPane {{
+                background:transparent;
+                border:none;
             }}
             QLabel {{
                 font-size:13px;
@@ -728,7 +781,7 @@ class TranscribeGUI(QWidget):
             QFrame#TitleCard {{
                 border:1px solid {palette["border"]};
                 border-radius:12px;
-                background:{palette["panel_alt"]};
+                background:{palette["panel"]};
             }}
             QGroupBox {{
                 border:1px solid {palette["border"]};
@@ -736,7 +789,7 @@ class TranscribeGUI(QWidget):
                 margin-top:11px;
                 padding-top:13px;
                 background:{palette["panel"]};
-                font-size:15px;
+                font-size:16px;
                 color:{palette["section_text"]};
             }}
             QGroupBox::title {{
@@ -746,49 +799,71 @@ class TranscribeGUI(QWidget):
                 color:{palette["section_text"]};
                 background:transparent;
             }}
+            QGroupBox#SidebarSection {{
+                background:{palette["panel_alt"]};
+            }}
+            QGroupBox#DashboardSection,
+            QGroupBox#FileQueueSection,
+            QGroupBox#ControlSection {{
+                background:{palette["panel"]};
+            }}
             QGroupBox#LogsSection {{
                 margin-top:12px;
                 padding-top:16px;
+                background:{palette["log_bg"]};
+                border-color:#10255f;
             }}
             QGroupBox#LogsSection::title {{
+                color:{palette["log_text"]};
                 left:12px;
                 padding:1px 6px 3px 6px;
             }}
+            QFrame#DashboardCard {{
+                border:1px solid {palette["divider"]};
+                border-radius:10px;
+                background:{palette["panel_alt"]};
+            }}
+            #DashboardMicroLabel {{
+                color:{palette["metric_label_text"]};
+                font-size:12px;
+                letter-spacing:0.6px;
+            }}
             #TitleText {{
-                font-size:31px;
+                font-size:36px;
                 color:{palette["title_text"]};
             }}
             #TitleHint {{
                 color:{palette["title_hint"]};
-                font-size:13px;
+                font-size:12px;
+                letter-spacing:1.0px;
             }}
             #PathLabel {{
                 border:1px solid {palette["divider"]};
                 border-radius:8px;
-                padding:9px 12px 10px 12px;
+                padding:10px 12px 10px 12px;
                 background:{palette["panel_inner"]};
                 color:{palette["path_text"]};
                 font-size:14px;
             }}
             #SideHelperText {{
                 color:{palette["muted_text"]};
-                font-size:14px;
-                padding:2px 0 3px 0;
+                font-size:13px;
+                padding:2px 0 4px 0;
             }}
             #HelperText {{
                 color:{palette["muted_text"]};
-                font-size:14px;
+                font-size:13px;
             }}
             #SectionValue {{
                 color:{palette["value_text"]};
-                font-size:13px;
+                font-size:14px;
             }}
             #StatusPrimary {{
-                font-size:18px;
+                font-size:28px;
                 color:{palette["value_text"]};
             }}
             #StatusSecondary {{
-                font-size:16px;
+                font-size:17px;
                 color:{palette["section_text"]};
             }}
             #MetaStatus {{
@@ -800,12 +875,12 @@ class TranscribeGUI(QWidget):
                 color:{palette["metric_label_text"]};
             }}
             #MetricValue {{
-                font-size:18px;
+                font-size:34px;
                 color:{palette["value_text"]};
             }}
             QPushButton {{
                 border:1px solid {palette["border"]};
-                border-radius:10px;
+                border-radius:6px;
                 padding:9px 12px 10px 12px;
                 background:{palette["accent_button"]};
                 color:{palette["button_text"]};
@@ -815,14 +890,47 @@ class TranscribeGUI(QWidget):
             QPushButton[uiRole="side"] {{
                 padding:9px 12px 10px 12px;
             }}
-            QPushButton[uiRole="control"] {{
-                min-height:38px;
-                padding:8px 12px 9px 12px;
+            QPushButton[uiRole="controlPrimary"] {{
+                min-height:40px;
+                background:{palette["primary_button"]};
+                color:{palette["on_primary"]};
+                border-color:{palette["primary_button"]};
+            }}
+            QPushButton[uiRole="controlPrimary"]:hover {{
+                background:{palette["primary_button_hover"]};
+            }}
+            QPushButton[uiRole="controlSecondary"] {{
+                min-height:40px;
+                background:{palette["panel"]};
+                border-color:{palette["primary_button"]};
+                color:{palette["primary_button"]};
+            }}
+            QPushButton[uiRole="controlSecondary"]:hover {{
+                background:{palette["accent_button_hover"]};
+            }}
+            QPushButton[uiRole="controlGhost"] {{
+                min-height:40px;
+                background:{palette["accent_button"]};
+            }}
+            QPushButton[uiRole="controlDanger"] {{
+                min-height:40px;
+                background:{palette["danger_button"]};
+                color:#9f1616;
+                border-color:{palette["danger_border"]};
+            }}
+            QPushButton[uiRole="controlDanger"]:hover {{
+                background:{palette["danger_button_hover"]};
             }}
             QPushButton[uiRole="logToggle"] {{
-                padding:1px 12px 2px 12px;
+                padding:2px 12px 2px 12px;
                 font-size:13px;
                 min-height:34px;
+                border-color:#263f81;
+                color:{palette["log_text"]};
+                background:#0d2256;
+            }}
+            QPushButton[uiRole="logToggle"]:hover {{
+                background:#163170;
             }}
             QPushButton:hover {{ background:{palette["accent_button_hover"]}; }}
             QPushButton:disabled {{
@@ -830,23 +938,18 @@ class TranscribeGUI(QWidget):
                 border-color:{palette["button_disabled_border"]};
                 color:{palette["button_disabled_text"]};
             }}
-            QPushButton#Danger {{
-                background:{palette["danger_button"]};
-                border-color:{palette["danger_border"]};
-                color:{palette["button_text"]};
-            }}
-            QPushButton#Danger:hover {{ background:{palette["danger_button_hover"]}; }}
             QListWidget {{
                 border:1px solid {palette["divider"]};
                 border-radius:10px;
-                background:{palette["panel_inner"]};
-                font-size:13px;
+                background:{palette["panel"]};
+                font-size:15px;
                 font-weight:500;
                 color:{palette["body_text"]};
-                padding:4px;
+                padding:6px;
+                alternate-background-color:{palette["panel_alt"]};
             }}
             QListWidget::item {{
-                padding:6px 8px;
+                padding:8px 10px;
                 border-radius:6px;
             }}
             QListWidget::item:selected {{
@@ -854,34 +957,45 @@ class TranscribeGUI(QWidget):
                 color:{palette["title_text"]};
             }}
             QTextEdit#LogViewer {{
-                border:1px solid {palette["divider"]};
+                border:1px solid #1c3472;
                 border-radius:10px;
-                background:{palette["panel_inner"]};
-                font-size:13px;
-                color:{palette["log_text"]};
-                padding:8px;
-                selection-background-color:{palette["selected_row"]};
+                background:#081a43;
+                font-size:14px;
+                color:{palette["log_accent"]};
+                padding:10px;
+                selection-background-color:#1c3472;
             }}
             QCheckBox {{
                 font-size:13px;
                 color:{palette["section_text"]};
                 font-weight:400;
                 spacing:8px;
-                padding:2px 0;
+                padding:3px 0;
                 background:transparent;
+            }}
+            QCheckBox::indicator {{
+                width:16px;
+                height:16px;
+                border:1px solid {palette["border"]};
+                border-radius:4px;
+                background:{palette["panel"]};
+            }}
+            QCheckBox::indicator:checked {{
+                background:{palette["primary_button"]};
+                border-color:{palette["primary_button"]};
             }}
             QProgressBar {{
                 border:1px solid {palette["progress_border"]};
-                border-radius:8px;
+                border-radius:6px;
                 background:{palette["progress_bg"]};
                 text-align:center;
-                min-height:23px;
+                min-height:14px;
                 color:{palette["value_text"]};
                 font-size:11px;
                 font-weight:600;
             }}
             QProgressBar::chunk {{
-                border-radius:7px;
+                border-radius:5px;
                 background:{palette["progress_chunk"]};
             }}
             """
@@ -1113,10 +1227,16 @@ class TranscribeGUI(QWidget):
 
     def show_tray_message(self, title, message):
         if self.tray_icon.isVisible():
+            head = (title or "").strip()
+            body = (message or "").strip()
+            if head:
+                head = f"{APP_DISPLAY_NAME} · {head}"
+            else:
+                head = APP_DISPLAY_NAME
             try:
-                self.tray_icon.showMessage(title, message, self.tray_icon.icon(), 5000)
+                self.tray_icon.showMessage(head, body, self.tray_icon.icon(), 5000)
             except TypeError:
-                self.tray_icon.showMessage(title, message, QSystemTrayIcon.Information, 5000)
+                self.tray_icon.showMessage(head, body, QSystemTrayIcon.Information, 5000)
 
     def restore_from_tray(self):
         self.showNormal()
