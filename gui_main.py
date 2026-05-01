@@ -1,4 +1,4 @@
-﻿
+
 import datetime
 import json
 import os
@@ -152,15 +152,38 @@ def load_runtime_icon() -> QIcon:
     candidates = [
         os.path.join(base, "transcribe_helper.ico"),
         os.path.join(base, "assets", "transcribe_helper.ico"),
+        os.path.join(base, "assets", "transcribe_helper.png"),
+        os.path.join(base, "transcribe_helper.png"),
+        os.path.join(base, "_internal", "transcribe_helper.ico"),
+        os.path.join(base, "_internal", "assets", "transcribe_helper.ico"),
+        os.path.join(base, "_internal", "assets", "transcribe_helper.png"),
+        os.path.join(base, "transcribe_helper.svg"),
+        os.path.join(base, "assets", "transcribe_helper.svg"),
+        os.path.join(base, "_internal", "transcribe_helper.svg"),
+        os.path.join(base, "_internal", "assets", "transcribe_helper.svg"),
     ]
     if meipass:
         candidates.extend(
             [
                 os.path.join(meipass, "transcribe_helper.ico"),
                 os.path.join(meipass, "assets", "transcribe_helper.ico"),
+                os.path.join(meipass, "assets", "transcribe_helper.png"),
+                os.path.join(meipass, "transcribe_helper.png"),
+                os.path.join(meipass, "_internal", "transcribe_helper.ico"),
+                os.path.join(meipass, "_internal", "assets", "transcribe_helper.ico"),
+                os.path.join(meipass, "_internal", "assets", "transcribe_helper.png"),
+                os.path.join(meipass, "transcribe_helper.svg"),
+                os.path.join(meipass, "assets", "transcribe_helper.svg"),
+                os.path.join(meipass, "_internal", "transcribe_helper.svg"),
+                os.path.join(meipass, "_internal", "assets", "transcribe_helper.svg"),
             ]
         )
+    seen = set()
     for path in candidates:
+        norm = os.path.normcase(os.path.abspath(path))
+        if norm in seen:
+            continue
+        seen.add(norm)
         if os.path.exists(path):
             icon = QIcon(path)
             if not icon.isNull():
@@ -264,53 +287,40 @@ def _pick_gmarket_font_files() -> dict[str, str]:
 
 def apply_preferred_ui_font(app: QApplication) -> tuple[str, list[str]]:
     debug_lines: list[str] = []
-    family_from_role: dict[str, str] = {}
-    base = get_runtime_base_dir()
-    meipass = getattr(sys, "_MEIPASS", "")
+    preferred_families = [
+        "Malgun Gothic",
+        "맑은 고딕",
+        "NanumBarunGothic",
+        "나눔바른고딕",
+        "NanumGothic",
+        "나눔고딕",
+        "Segoe UI",
+        "Arial",
+    ]
 
-    gmarket_files = _pick_gmarket_font_files()
-    debug_lines.append(f"[FONT] runtime_base_dir={base}")
-    debug_lines.append(f"[FONT] meipass={meipass or '(none)'}")
-    debug_lines.append(f"[FONT] target files (light/medium/bold) = {gmarket_files}")
-
-    for role in ("light", "medium", "bold"):
-        path = gmarket_files.get(role, "")
-        if not path:
-            debug_lines.append(f"[FONT] {role}: missing file")
-            continue
-        exists = os.path.exists(path)
-        size = os.path.getsize(path) if exists else -1
-        font_id = QFontDatabase.addApplicationFont(path)
-        success = font_id != -1
-        families = QFontDatabase.applicationFontFamilies(font_id) if success else []
-        family = families[0] if families else ""
-        if family:
-            family_from_role[role] = family
-        debug_lines.append(f"[FONT] {role}: path={path}")
-        debug_lines.append(f"[FONT] {role}: exists={exists}, size={size}")
-        debug_lines.append(f"[FONT] {role}: addApplicationFont success={success}, id={font_id}")
-        debug_lines.append(f"[FONT] {role}: applicationFontFamilies={families}")
-
-    selected = family_from_role.get("medium") or family_from_role.get("light") or family_from_role.get("bold") or ""
-
+    installed = {name.lower(): name for name in QFontDatabase.families()}
+    selected = ""
+    for fam in preferred_families:
+        if fam.lower() in installed:
+            selected = installed[fam.lower()]
+            break
     if not selected:
         selected = app.font().family() or "Segoe UI"
-        debug_lines.append(f"[FONT] fallback(default app font, gmarket load failed): {selected}")
+
+    debug_lines.append(f"[FONT] selected_base_family={selected}")
+    debug_lines.append(f"[FONT] preferred_candidates={preferred_families}")
 
     font = QFont(selected, UI_DEFAULT_FONT_SIZE)
     try:
-        # Windows/Qt 기본 힌팅 경로를 우선 사용해 글자 가장자리 거칠음을 줄인다.
         font.setHintingPreference(QFont.HintingPreference.PreferDefaultHinting)
     except Exception:
         pass
     try:
-        # OS 기본 렌더링(클리어타입 포함) 경로를 우선 사용한다.
         font.setStyleStrategy(QFont.StyleStrategy.PreferDefault | QFont.StyleStrategy.PreferAntialias)
     except Exception:
         pass
     try:
-        # Gmarket Sans를 1순위로 고정하고, 이후는 시스템 fallback만 둔다.
-        font.setFamilies([selected, "맑은 고딕", "Malgun Gothic", "Segoe UI"])
+        font.setFamilies(["Malgun Gothic", "맑은 고딕", "NanumBarunGothic", "NanumGothic", "Segoe UI", "Arial"])
     except Exception:
         pass
     try:
@@ -476,8 +486,8 @@ class TranscribeGUI(QWidget):
         sbox = QVBoxLayout(settings)
         sbox.setContentsMargins(14, 16, 14, 14)
         sbox.setSpacing(8)
-        self.label_settings_hint = QLabel("전사 전에 사용할 폴더와 로그 설정을 먼저 지정하세요.", objectName="SideHelperText")
-        self.label_settings_hint.setWordWrap(False)
+        self.label_settings_hint = QLabel("전사 전에 사용할 폴더를 먼저 지정하세요.", objectName="SideHelperText")
+        self.label_settings_hint.setWordWrap(True)
         sbox.addWidget(self.label_settings_hint)
 
         self.label_download = QLabel("다운로드 폴더: 아직 선택 안 함")
@@ -511,7 +521,7 @@ class TranscribeGUI(QWidget):
         obox.setContentsMargins(14, 16, 14, 12)
         obox.setSpacing(6)
         self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
-        self.chk_notify_total = QCheckBox("?? ?? ?? ??")
+        self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
         self.chk_notify_each_file.setChecked(True)
         self.chk_notify_total.setChecked(True)
@@ -566,14 +576,19 @@ class TranscribeGUI(QWidget):
 
         self.label_total_progress_text = QLabel("0 / 0")
         self.label_total_progress_text.setObjectName("MetricValue")
+        self.label_total_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.total_progress_bar = QProgressBar()
         self.total_progress_bar.setRange(0, 100)
+        self.total_progress_bar.setFixedHeight(15)
         self.label_total_eta = QLabel(ETA_EMPTY_TEXT)
         self.label_total_eta.setObjectName("MetricValue")
+        self.label_total_eta.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.label_current_progress_text = QLabel("0%")
         self.label_current_progress_text.setObjectName("MetricValue")
+        self.label_current_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.current_progress_bar = QProgressBar()
         self.current_progress_bar.setRange(0, 100)
+        self.current_progress_bar.setFixedHeight(15)
         self.label_current_eta = QLabel(ETA_EMPTY_TEXT)
         self.label_current_eta.setObjectName("MetricValue")
 
@@ -594,10 +609,11 @@ class TranscribeGUI(QWidget):
         card_progress.setObjectName("DashboardCard")
         card_progress_box = QVBoxLayout(card_progress)
         card_progress_box.setContentsMargins(14, 12, 14, 12)
-        card_progress_box.setSpacing(6)
+        card_progress_box.setSpacing(8)
         card_progress_title = QLabel("TOTAL PROGRESS", objectName="DashboardMicroLabel")
         card_progress_box.addWidget(card_progress_title)
         card_progress_box.addWidget(self.label_total_progress_text)
+        card_progress_box.addSpacing(2)
         card_progress_box.addWidget(self.total_progress_bar)
         top_cards.addWidget(card_progress, 4)
 
@@ -616,18 +632,20 @@ class TranscribeGUI(QWidget):
         card_current.setObjectName("DashboardCard")
         card_current_box = QVBoxLayout(card_current)
         card_current_box.setContentsMargins(14, 12, 14, 12)
-        card_current_box.setSpacing(6)
+        card_current_box.setSpacing(8)
         card_current_title = QLabel("CURRENT FILE", objectName="DashboardMicroLabel")
         card_current_box.addWidget(card_current_title)
         card_current_box.addWidget(self.label_current_file)
 
         current_row = QHBoxLayout()
+        current_row.setContentsMargins(0, 2, 0, 0)
         current_row.setSpacing(12)
         current_progress_col = QVBoxLayout()
-        current_progress_col.setSpacing(4)
+        current_progress_col.setSpacing(7)
         current_progress_label = QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel")
         current_progress_col.addWidget(current_progress_label)
         current_progress_col.addWidget(self.label_current_progress_text)
+        current_progress_col.addSpacing(2)
         current_progress_col.addWidget(self.current_progress_bar)
         current_row.addLayout(current_progress_col, 3)
 
@@ -646,7 +664,7 @@ class TranscribeGUI(QWidget):
         dbox.addWidget(self.label_output_source)
         right.addWidget(dashboard)
 
-        files = QGroupBox("MP3 ?? ??")
+        files = QGroupBox("MP3 파일 목록")
         files.setObjectName("FileQueueSection")
         files.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         fbox = QVBoxLayout(files)
@@ -670,7 +688,7 @@ class TranscribeGUI(QWidget):
         right.addWidget(files, 1)
         self.group_files = files
 
-        controls = QGroupBox("?? ??")
+        controls = QGroupBox("실행 제어")
         controls.setObjectName("ControlSection")
         controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         cbox = QVBoxLayout(controls)
@@ -691,7 +709,7 @@ class TranscribeGUI(QWidget):
         row2.setSpacing(8)
         self.btn_move_files = QPushButton("선택한 MP3를 전사자료 폴더로 이동")
         self.btn_move_files.setProperty("uiRole", "controlGhost")
-        self.btn_stop_now = QPushButton("?? ??")
+        self.btn_stop_now = QPushButton("즉시 중지")
         self.btn_stop_now.setProperty("uiRole", "controlDanger")
         self.btn_stop_now.setObjectName("Danger")
         self.btn_stop_now.setEnabled(False)
@@ -758,6 +776,7 @@ class TranscribeGUI(QWidget):
         self.setStyleSheet(
             f"""
             QWidget {{
+                font-family:"Malgun Gothic", "맑은 고딕", "NanumBarunGothic", "NanumGothic", "Segoe UI", Arial, sans-serif;
                 color:{palette["body_text"]};
                 font-size:13px;
             }}
@@ -786,16 +805,17 @@ class TranscribeGUI(QWidget):
             QGroupBox {{
                 border:1px solid {palette["border"]};
                 border-radius:10px;
-                margin-top:11px;
-                padding-top:13px;
+                margin-top:10px;
+                padding-top:20px;
                 background:{palette["panel"]};
-                font-size:16px;
+                font-size:15px;
                 color:{palette["section_text"]};
             }}
             QGroupBox::title {{
-                subcontrol-origin: margin;
-                left:12px;
-                padding:0 6px 1px 6px;
+                subcontrol-origin: padding;
+                subcontrol-position: top left;
+                left:0px;
+                padding:0 2px 4px 2px;
                 color:{palette["section_text"]};
                 background:transparent;
             }}
@@ -808,15 +828,16 @@ class TranscribeGUI(QWidget):
                 background:{palette["panel"]};
             }}
             QGroupBox#LogsSection {{
-                margin-top:12px;
-                padding-top:16px;
+                margin-top:10px;
+                padding-top:22px;
                 background:{palette["log_bg"]};
                 border-color:#10255f;
             }}
             QGroupBox#LogsSection::title {{
                 color:{palette["log_text"]};
-                left:12px;
-                padding:1px 6px 3px 6px;
+                left:0px;
+                padding:0 2px 4px 2px;
+                background:transparent;
             }}
             QFrame#DashboardCard {{
                 border:1px solid {palette["divider"]};
@@ -829,7 +850,7 @@ class TranscribeGUI(QWidget):
                 letter-spacing:0.6px;
             }}
             #TitleText {{
-                font-size:36px;
+                font-size:31px;
                 color:{palette["title_text"]};
             }}
             #TitleHint {{
@@ -859,11 +880,11 @@ class TranscribeGUI(QWidget):
                 font-size:14px;
             }}
             #StatusPrimary {{
-                font-size:28px;
+                font-size:24px;
                 color:{palette["value_text"]};
             }}
             #StatusSecondary {{
-                font-size:17px;
+                font-size:16px;
                 color:{palette["section_text"]};
             }}
             #MetaStatus {{
@@ -875,7 +896,7 @@ class TranscribeGUI(QWidget):
                 color:{palette["metric_label_text"]};
             }}
             #MetricValue {{
-                font-size:34px;
+                font-size:29px;
                 color:{palette["value_text"]};
             }}
             QPushButton {{
@@ -936,7 +957,7 @@ class TranscribeGUI(QWidget):
             QPushButton:disabled {{
                 background:{palette["button_disabled_bg"]};
                 border-color:{palette["button_disabled_border"]};
-                color:{palette["button_disabled_text"]};
+                color:#7a859a;
             }}
             QListWidget {{
                 border:1px solid {palette["divider"]};
@@ -960,6 +981,7 @@ class TranscribeGUI(QWidget):
                 border:1px solid #1c3472;
                 border-radius:10px;
                 background:#081a43;
+                font-family:"Consolas", "D2Coding", "Malgun Gothic", monospace;
                 font-size:14px;
                 color:{palette["log_accent"]};
                 padding:10px;
@@ -1067,12 +1089,11 @@ class TranscribeGUI(QWidget):
                     f.setWeight(QFont.Weight.Normal)
             widget.setFont(f)
 
-        # Gmarket Sans 기준: 제목/강조 Bold, 버튼/라벨/본문은 Medium으로 정리.
-        _set_weight(self.label_title_text, 700)
+        _set_weight(self.label_title_text, 550)
         _set_weight(self.label_title_hint, 500)
 
         for group in (self.group_settings, self.group_options, self.group_logs):
-            _set_weight(group, 700)
+            _set_weight(group, 550)
 
         for btn in (
             self.btn_download,
@@ -1093,27 +1114,35 @@ class TranscribeGUI(QWidget):
             self.label_session,
             self.label_output_source,
         ):
-            _set_weight(lbl, 500)
+            _set_weight(lbl, 450)
 
         for lbl in (self.label_download, self.label_target):
             _set_weight(lbl, 500)
 
-        _set_weight(self.label_status, 700)
-        _set_weight(self.label_current_file, 700)
-        _set_weight(self.label_total_progress_text, 700)
-        _set_weight(self.label_total_eta, 700)
-        _set_weight(self.label_current_progress_text, 700)
-        _set_weight(self.label_current_eta, 700)
-        _set_weight(self.label_file_count, 700)
-        _set_weight(self.log_viewer, 500)
+        _set_weight(self.label_status, 550)
+        _set_weight(self.label_current_file, 550)
+        _set_weight(self.label_total_progress_text, 600)
+        _set_weight(self.label_total_eta, 550)
+        _set_weight(self.label_current_progress_text, 600)
+        _set_weight(self.label_current_eta, 550)
+        _set_weight(self.label_file_count, 550)
+        _set_weight(self.log_viewer, 400)
         self.log_viewer.document().setDefaultFont(self.log_viewer.font())
 
         for lbl in self.findChildren(QLabel):
             if lbl.objectName() == "MetricTitle":
-                _set_weight(lbl, 500)
+                _set_weight(lbl, 600)
 
         for cb in (self.chk_notify_each_file, self.chk_notify_total, self.shutdown_checkbox):
             _set_weight(cb, 500)
+
+        log_font = QFont(self.log_viewer.font())
+        try:
+            log_font.setFamilies(["Consolas", "D2Coding", "Malgun Gothic", "맑은 고딕"])
+        except Exception:
+            pass
+        self.log_viewer.setFont(log_font)
+        self.log_viewer.document().setDefaultFont(log_font)
 
     def apply_left_section_layout_constraints(self):
         # 설정/옵션은 안정 영역으로 고정하고, 실행 로그만 남는 공간을 쓰도록 분리한다.
