@@ -584,7 +584,7 @@ class TranscribeGUI(QWidget):
         self.label_total_eta.setObjectName("MetricValue")
         self.label_total_eta.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.label_current_progress_text = QLabel("0%")
-        self.label_current_progress_text.setObjectName("MetricValue")
+        self.label_current_progress_text.setObjectName("CurrentProgressValue")
         self.label_current_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.current_progress_bar = QProgressBar()
         self.current_progress_bar.setRange(0, 100)
@@ -641,11 +641,11 @@ class TranscribeGUI(QWidget):
         current_row.setContentsMargins(0, 2, 0, 0)
         current_row.setSpacing(12)
         current_progress_col = QVBoxLayout()
-        current_progress_col.setSpacing(7)
+        current_progress_col.setSpacing(10)
         current_progress_label = QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel")
         current_progress_col.addWidget(current_progress_label)
         current_progress_col.addWidget(self.label_current_progress_text)
-        current_progress_col.addSpacing(2)
+        current_progress_col.addSpacing(6)
         current_progress_col.addWidget(self.current_progress_bar)
         current_row.addLayout(current_progress_col, 3)
 
@@ -899,6 +899,11 @@ class TranscribeGUI(QWidget):
                 font-size:29px;
                 color:{palette["value_text"]};
             }}
+            #CurrentProgressValue {{
+                font-size:24px;
+                color:{palette["value_text"]};
+                padding-bottom:2px;
+            }}
             QPushButton {{
                 border:1px solid {palette["border"]};
                 border-radius:6px;
@@ -1060,7 +1065,8 @@ class TranscribeGUI(QWidget):
             self.label_current_progress_text,
             self.label_current_eta,
         ):
-            metric_h = metric_label.fontMetrics().lineSpacing() + 6
+            extra_pad = 12 if metric_label is self.label_current_progress_text else 6
+            metric_h = metric_label.fontMetrics().lineSpacing() + extra_pad
             metric_label.setMinimumHeight(max(metric_label.minimumHeight(), metric_h))
 
         # 로그 토글 버튼은 열림/닫힘 상태 모두에서 baseline 잘림이 없도록 높이를 고정한다.
