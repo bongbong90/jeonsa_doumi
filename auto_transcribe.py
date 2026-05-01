@@ -314,17 +314,22 @@ def output_files_look_complete(audio_path: str) -> bool:
     for p in paths.values():
         if not os.path.exists(p):
             return False
+    # txt/json은 최소 1바이트 이상이어야 한다.
+    for key in ("txt", "json"):
         try:
-            if os.path.getsize(p) <= 0:
+            if os.path.getsize(paths[key]) <= 0:
                 return False
         except OSError:
             return False
+    # srt는 무음 파일에서 비어 있을 수 있으므로 존재 여부만 확인한다.
 
     # json이 손상되어 있으면 완료로 보지 않는다.
     try:
         with open(paths["json"], "r", encoding="utf-8-sig") as f:
             data = json.load(f)
         if not isinstance(data, dict):
+            return False
+        if "text" not in data or "segments" not in data:
             return False
     except Exception:
         return False

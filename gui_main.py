@@ -1284,6 +1284,7 @@ class TranscribeGUI(QWidget):
         for path in (txt_path, json_path, srt_path):
             if not os.path.exists(path):
                 return False
+        for path in (txt_path, json_path):
             try:
                 if os.path.getsize(path) <= 0:
                     return False
@@ -1293,6 +1294,8 @@ class TranscribeGUI(QWidget):
             with open(json_path, "r", encoding="utf-8-sig") as f:
                 data = json.load(f)
             if not isinstance(data, dict):
+                return False
+            if "text" not in data or "segments" not in data:
                 return False
         except Exception:
             return False
