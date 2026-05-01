@@ -8,7 +8,7 @@ env/
 
 build/
 dist/
-*.spec
+*.spec.bak
 
 *.exe
 
@@ -19,6 +19,9 @@ dist/
 *.tmp
 
 transcribe_session_state.json
+transcribe_session_state.json.tmp
+stop.flag
+archive/temp_files/
 
 *_test.png
 *_check_16.png
