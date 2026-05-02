@@ -9,7 +9,7 @@ import subprocess
 import sys
 import time
 
-from PySide6.QtCore import QProcess, QTimer, Qt
+from PySide6.QtCore import QProcess, QSize, QTimer, Qt
 from PySide6.QtGui import QAction, QFont, QFontDatabase, QFontInfo, QIcon, QTextCursor, QTextOption
 from PySide6.QtWidgets import (
     QApplication,
@@ -425,6 +425,7 @@ class TranscribeGUI(QWidget):
         self._current_file_full_text = "현재 처리 중 파일: 없음"
         self._session_full_text = "세션 상태: 확인 안 됨"
         self._output_full_text = "실시간 출력: GUI에 직접 연결됨"
+        self._output_text_elide_mode = Qt.ElideRight
 
         self.build_ui()
         self.apply_styles()
@@ -454,7 +455,7 @@ class TranscribeGUI(QWidget):
         sidebar.setFixedWidth(340)
         left = QVBoxLayout(sidebar)
         left.setContentsMargins(14, 14, 14, 14)
-        left.setSpacing(12)
+        left.setSpacing(14)
 
         mainpane = QFrame()
         mainpane.setObjectName("MainPane")
@@ -515,6 +516,7 @@ class TranscribeGUI(QWidget):
         sbox.addWidget(self.btn_load_files)
         left.addWidget(settings)
         self.group_settings = settings
+        left.addSpacing(2)
 
         options = QGroupBox("")
         options.setObjectName("SidebarSection")
@@ -603,6 +605,7 @@ class TranscribeGUI(QWidget):
         self.label_current_progress_text.setObjectName("CurrentProgressValue")
         self.label_current_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.current_progress_bar = QProgressBar()
+        self.current_progress_bar.setObjectName("CurrentProgressBar")
         self.current_progress_bar.setRange(0, 100)
         self.current_progress_bar.setFixedHeight(15)
         self.label_current_eta = QLabel(ETA_EMPTY_TEXT)
@@ -646,22 +649,24 @@ class TranscribeGUI(QWidget):
 
         card_current = QFrame()
         card_current.setObjectName("DashboardCard")
+        card_current.setMinimumHeight(180)
         card_current_box = QVBoxLayout(card_current)
         card_current_box.setContentsMargins(14, 12, 14, 12)
-        card_current_box.setSpacing(8)
+        card_current_box.setSpacing(10)
         card_current_title = QLabel("CURRENT FILE", objectName="DashboardMicroLabel")
         card_current_box.addWidget(card_current_title)
         card_current_box.addWidget(self.label_current_file)
 
         current_row = QHBoxLayout()
-        current_row.setContentsMargins(0, 2, 0, 0)
+        current_row.setContentsMargins(0, 6, 0, 0)
         current_row.setSpacing(12)
         current_progress_col = QVBoxLayout()
-        current_progress_col.setSpacing(10)
+        current_progress_col.setSpacing(9)
+        current_progress_col.setContentsMargins(0, 0, 0, 2)
         current_progress_label = QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel")
         current_progress_col.addWidget(current_progress_label)
         current_progress_col.addWidget(self.label_current_progress_text)
-        current_progress_col.addSpacing(6)
+        current_progress_col.addSpacing(18)
         current_progress_col.addWidget(self.current_progress_bar)
         current_row.addLayout(current_progress_col, 3)
 
@@ -700,9 +705,11 @@ class TranscribeGUI(QWidget):
         self.file_list_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.file_list_widget.setTextElideMode(Qt.ElideMiddle)
         self.file_list_widget.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.file_list_widget.setUniformItemSizes(True)
+        self.file_list_widget.setUniformItemSizes(False)
         self.file_list_widget.setAlternatingRowColors(True)
-        self.file_list_widget.setSpacing(4)
+        self.file_list_widget.setSpacing(2)
+        self.file_list_widget.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)
+        self.file_list_widget.setViewportMargins(0, 0, 0, 4)
         fbox.addWidget(self.file_list_widget, 1)
         right.addWidget(files, 1)
         self.group_files = files
@@ -927,9 +934,12 @@ class TranscribeGUI(QWidget):
                 color:{palette["value_text"]};
             }}
             #CurrentProgressValue {{
-                font-size:24px;
+                font-size:22px;
                 color:{palette["value_text"]};
-                padding-bottom:2px;
+                padding-bottom:0px;
+            }}
+            QProgressBar#CurrentProgressBar {{
+                margin-top:6px;
             }}
             QPushButton {{
                 border:1px solid {palette["border"]};
@@ -998,11 +1008,11 @@ class TranscribeGUI(QWidget):
                 font-size:15px;
                 font-weight:500;
                 color:{palette["body_text"]};
-                padding:6px;
+                padding:6px 6px 8px 6px;
                 alternate-background-color:{palette["panel_alt"]};
             }}
             QListWidget::item {{
-                padding:8px 10px;
+                padding:7px 10px;
                 border-radius:6px;
             }}
             QListWidget::item:selected {{
@@ -1082,12 +1092,15 @@ class TranscribeGUI(QWidget):
         for metric_label in (
             self.label_total_progress_text,
             self.label_total_eta,
-            self.label_current_progress_text,
             self.label_current_eta,
         ):
-            extra_pad = 12 if metric_label is self.label_current_progress_text else 6
+            extra_pad = 6
             metric_h = metric_label.fontMetrics().lineSpacing() + extra_pad
             metric_label.setMinimumHeight(max(metric_label.minimumHeight(), metric_h))
+
+        current_progress_h = self.label_current_progress_text.fontMetrics().lineSpacing() + 4
+        self.label_current_progress_text.setMinimumHeight(max(30, current_progress_h))
+        self.label_current_progress_text.setMaximumHeight(max(30, current_progress_h))
 
         # 로그 토글 버튼은 열림/닫힘 상태 모두에서 baseline 잘림이 없도록 높이를 고정한다.
         log_btn_h = max(self.btn_toggle_log.sizeHint().height(), self.btn_toggle_log.fontMetrics().lineSpacing() + 16, 36)
@@ -1181,11 +1194,13 @@ class TranscribeGUI(QWidget):
         self.log_viewer.document().setDefaultFont(log_font)
 
     def apply_left_section_layout_constraints(self):
-        # 설정/옵션은 안정 영역으로 고정하고, 실행 로그만 남는 공간을 쓰도록 분리한다.
-        for section in (self.group_title, self.group_settings, self.group_options):
-            h = section.sizeHint().height()
-            section.setMinimumHeight(h)
-            section.setMaximumHeight(h)
+        # 타이틀 카드는 고정하되, 설정/옵션 카드는 레이아웃 환경에 맞춰 자연스럽게 배치되도록 둔다.
+        title_h = self.group_title.sizeHint().height()
+        self.group_title.setMinimumHeight(title_h)
+        self.group_title.setMaximumHeight(title_h)
+        for section in (self.group_settings, self.group_options):
+            section.setMinimumHeight(0)
+            section.setMaximumHeight(16777215)
 
     def _elide_for_label(self, label: QLabel, text: str, mode=Qt.ElideRight) -> str:
         available = max(120, label.width() - 14)
@@ -1210,7 +1225,11 @@ class TranscribeGUI(QWidget):
 
     def _set_output_text(self, text: str):
         self._output_full_text = text
-        self._set_elided_label_text(self.label_output_source, text)
+        self._set_elided_label_text(self.label_output_source, text, self._output_text_elide_mode)
+
+    def _set_output_text_mode(self, mode):
+        self._output_text_elide_mode = mode
+        self._set_elided_label_text(self.label_output_source, self._output_full_text, mode)
 
     def _set_eta_value(self, label: QLabel, text: str):
         # 값 유형과 무관하게 ETA 셀 중앙 정렬 기준을 고정한다.
@@ -1378,14 +1397,24 @@ class TranscribeGUI(QWidget):
         path = self.get_session_state_path()
         if not path or not os.path.exists(path):
             self._set_session_text("세션 상태: 확인 안 됨")
+            self._set_output_text_mode(Qt.ElideRight)
+            self._set_output_text("실시간 출력: GUI에 직접 연결됨")
             return
         try:
             state = self.load_session_state_safely(path)
             status = self.translate_session_status(state.get("status", "없음"))
             cur = state.get("current_file", "")
-            self._set_session_text(f"세션 상태: {status}" + (f" / 마지막 파일: {cur}" if cur else ""))
+            self._set_session_text(f"세션 상태: {status}")
+            if cur:
+                self._set_output_text_mode(Qt.ElideMiddle)
+                self._set_output_text(f"마지막 파일: {cur}")
+            else:
+                self._set_output_text_mode(Qt.ElideRight)
+                self._set_output_text("실시간 출력: GUI에 직접 연결됨")
         except Exception:
             self._set_session_text("세션 상태: 읽기 실패")
+            self._set_output_text_mode(Qt.ElideRight)
+            self._set_output_text("실시간 출력: GUI에 직접 연결됨")
 
     def select_download_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "다운로드 폴더 선택")
@@ -1409,9 +1438,11 @@ class TranscribeGUI(QWidget):
         self.file_list_widget.clear()
         try:
             files = sorted([x for x in os.listdir(self.download_folder) if x.lower().endswith(".mp3")])
+            row_height = max(30, self.file_list_widget.fontMetrics().lineSpacing() + 12)
             for name in files:
                 item = QListWidgetItem(name)
                 item.setToolTip(name)
+                item.setSizeHint(QSize(0, row_height))
                 self.file_list_widget.addItem(item)
             self.label_file_count.setText(f"불러온 MP3 파일 수: {len(files)}개")
             if not files and show_empty_message:
