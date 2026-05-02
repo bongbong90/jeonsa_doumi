@@ -480,12 +480,14 @@ class TranscribeGUI(QWidget):
         left.addWidget(title)
         self.group_title = title
 
-        settings = QGroupBox("Folder Settings")
+        settings = QGroupBox("")
         settings.setObjectName("SidebarSection")
         settings.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         sbox = QVBoxLayout(settings)
-        sbox.setContentsMargins(14, 16, 14, 14)
-        sbox.setSpacing(8)
+        sbox.setContentsMargins(14, 14, 14, 14)
+        sbox.setSpacing(9)
+        self.label_section_settings = QLabel("폴더 설정", objectName="SectionTitle")
+        sbox.addWidget(self.label_section_settings)
         self.label_settings_hint = QLabel("전사 전에 사용할 폴더를 먼저 지정하세요.", objectName="SideHelperText")
         self.label_settings_hint.setWordWrap(True)
         sbox.addWidget(self.label_settings_hint)
@@ -514,12 +516,14 @@ class TranscribeGUI(QWidget):
         left.addWidget(settings)
         self.group_settings = settings
 
-        options = QGroupBox("Options")
+        options = QGroupBox("")
         options.setObjectName("SidebarSection")
         options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         obox = QVBoxLayout(options)
-        obox.setContentsMargins(14, 16, 14, 12)
-        obox.setSpacing(6)
+        obox.setContentsMargins(14, 14, 14, 12)
+        obox.setSpacing(7)
+        self.label_section_options = QLabel("알림 및 종료 옵션", objectName="SectionTitle")
+        obox.addWidget(self.label_section_options)
         self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
         self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
@@ -531,16 +535,26 @@ class TranscribeGUI(QWidget):
         left.addWidget(options)
         self.group_options = options
 
-        logs = QGroupBox("Execution Log")
+        logs = QGroupBox("")
         logs.setObjectName("LogsSection")
         logs.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         lbox = QVBoxLayout(logs)
-        lbox.setContentsMargins(14, 16, 14, 12)
+        lbox.setContentsMargins(14, 14, 14, 12)
         lbox.setSpacing(9)
+        self.label_section_logs = QLabel("실행 로그", objectName="SectionTitleLog")
+        lbox.addWidget(self.label_section_logs)
         self.btn_toggle_log = QPushButton("로그창 보기")
         self.btn_toggle_log.setProperty("uiRole", "logToggle")
         self.btn_toggle_log.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         lbox.addWidget(self.btn_toggle_log)
+        self.label_log_collapsed_hint = QLabel("로그창이 숨겨져 있습니다.", objectName="LogCollapsedHint")
+        self.label_log_collapsed_hint.setWordWrap(True)
+        lbox.addWidget(self.label_log_collapsed_hint)
+        self.label_log_collapsed_subhint = QLabel(
+            "버튼을 누르면 실행 로그를 확인할 수 있습니다.", objectName="LogCollapsedSubHint"
+        )
+        self.label_log_collapsed_subhint.setWordWrap(True)
+        lbox.addWidget(self.label_log_collapsed_subhint)
         self.log_viewer = QTextEdit()
         self.log_viewer.setObjectName("LogViewer")
         self.log_viewer.setReadOnly(True)
@@ -550,16 +564,18 @@ class TranscribeGUI(QWidget):
         self.log_viewer.setLineWrapMode(QTextEdit.WidgetWidth)
         self.log_viewer.setWordWrapMode(QTextOption.WrapAnywhere)
         self.log_viewer.document().setDocumentMargin(12)
-        self.log_viewer.hide()
+        self.log_viewer.setVisible(False)
         lbox.addWidget(self.log_viewer)
         left.addWidget(logs, 1)
         self.group_logs = logs
 
-        dashboard = QGroupBox("진행 대시보드")
+        dashboard = QGroupBox("")
         dashboard.setObjectName("DashboardSection")
         dbox = QVBoxLayout(dashboard)
         dbox.setContentsMargins(14, 14, 14, 14)
         dbox.setSpacing(10)
+        self.label_section_dashboard = QLabel("진행 대시보드", objectName="SectionTitle")
+        dbox.addWidget(self.label_section_dashboard)
 
         self.label_status = QLabel("")
         self.label_status.setObjectName("StatusPrimary")
@@ -663,13 +679,16 @@ class TranscribeGUI(QWidget):
         dbox.addWidget(self.label_session)
         dbox.addWidget(self.label_output_source)
         right.addWidget(dashboard)
+        self.group_dashboard = dashboard
 
-        files = QGroupBox("MP3 파일 목록")
+        files = QGroupBox("")
         files.setObjectName("FileQueueSection")
         files.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         fbox = QVBoxLayout(files)
-        fbox.setContentsMargins(14, 16, 14, 14)
+        fbox.setContentsMargins(14, 14, 14, 14)
         fbox.setSpacing(8)
+        self.label_section_files = QLabel("MP3 파일 목록", objectName="SectionTitle")
+        fbox.addWidget(self.label_section_files)
         self.label_file_count = QLabel("불러온 MP3 파일 수: 0개")
         self.label_file_count.setObjectName("SectionValue")
         fbox.addWidget(self.label_file_count)
@@ -688,12 +707,14 @@ class TranscribeGUI(QWidget):
         right.addWidget(files, 1)
         self.group_files = files
 
-        controls = QGroupBox("실행 제어")
+        controls = QGroupBox("")
         controls.setObjectName("ControlSection")
         controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         cbox = QVBoxLayout(controls)
         cbox.setContentsMargins(14, 14, 14, 14)
         cbox.setSpacing(8)
+        self.label_section_controls = QLabel("실행 제어", objectName="SectionTitle")
+        cbox.addWidget(self.label_section_controls)
         self.label_controls_helper = QLabel("시작 버튼으로 전사를 실행하고, 필요하면 즉시 중지할 수 있습니다.", objectName="HelperText")
         cbox.addWidget(self.label_controls_helper)
         row1 = QHBoxLayout()
@@ -717,6 +738,7 @@ class TranscribeGUI(QWidget):
         row2.addWidget(self.btn_stop_now, 1)
         cbox.addLayout(row2)
         right.addWidget(controls)
+        self.group_controls = controls
         right.setStretch(0, 0)
         right.setStretch(1, 1)
         right.setStretch(2, 0)
@@ -732,6 +754,7 @@ class TranscribeGUI(QWidget):
         self.btn_transcribe_target.clicked.connect(self.start_transcribe_on_target_folder)
         self.btn_stop_now.clicked.connect(self.request_immediate_stop)
         self.btn_toggle_log.clicked.connect(self.toggle_log_view)
+        self._sync_log_panel_state()
 
     def apply_styles(self):
         palette = {
@@ -805,19 +828,11 @@ class TranscribeGUI(QWidget):
             QGroupBox {{
                 border:1px solid {palette["border"]};
                 border-radius:10px;
-                margin-top:10px;
-                padding-top:20px;
+                margin-top:0px;
+                padding-top:0px;
                 background:{palette["panel"]};
                 font-size:15px;
                 color:{palette["section_text"]};
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: padding;
-                subcontrol-position: top left;
-                left:0px;
-                padding:0 2px 4px 2px;
-                color:{palette["section_text"]};
-                background:transparent;
             }}
             QGroupBox#SidebarSection {{
                 background:{palette["panel_alt"]};
@@ -828,16 +843,28 @@ class TranscribeGUI(QWidget):
                 background:{palette["panel"]};
             }}
             QGroupBox#LogsSection {{
-                margin-top:10px;
-                padding-top:22px;
+                margin-top:0px;
+                padding-top:0px;
                 background:{palette["log_bg"]};
                 border-color:#10255f;
             }}
-            QGroupBox#LogsSection::title {{
+            #SectionTitle {{
+                color:{palette["section_text"]};
+                font-size:15px;
+            }}
+            #SectionTitleLog {{
                 color:{palette["log_text"]};
-                left:0px;
-                padding:0 2px 4px 2px;
-                background:transparent;
+                font-size:15px;
+            }}
+            #LogCollapsedHint {{
+                color:{palette["log_text"]};
+                font-size:13px;
+                padding-top:2px;
+            }}
+            #LogCollapsedSubHint {{
+                color:#9cb2e4;
+                font-size:12px;
+                padding-bottom:2px;
             }}
             QFrame#DashboardCard {{
                 border:1px solid {palette["divider"]};
@@ -997,19 +1024,12 @@ class TranscribeGUI(QWidget):
                 color:{palette["section_text"]};
                 font-weight:400;
                 spacing:8px;
-                padding:3px 0;
+                padding:4px 0;
                 background:transparent;
             }}
             QCheckBox::indicator {{
-                width:16px;
-                height:16px;
-                border:1px solid {palette["border"]};
-                border-radius:4px;
-                background:{palette["panel"]};
-            }}
-            QCheckBox::indicator:checked {{
-                background:{palette["primary_button"]};
-                border-color:{palette["primary_button"]};
+                width:17px;
+                height:17px;
             }}
             QProgressBar {{
                 border:1px solid {palette["progress_border"]};
@@ -1098,8 +1118,18 @@ class TranscribeGUI(QWidget):
         _set_weight(self.label_title_text, 550)
         _set_weight(self.label_title_hint, 500)
 
-        for group in (self.group_settings, self.group_options, self.group_logs):
+        for group in (self.group_settings, self.group_options, self.group_logs, self.group_dashboard, self.group_files, self.group_controls):
             _set_weight(group, 550)
+
+        for lbl in (
+            self.label_section_settings,
+            self.label_section_options,
+            self.label_section_logs,
+            self.label_section_dashboard,
+            self.label_section_files,
+            self.label_section_controls,
+        ):
+            _set_weight(lbl, 600)
 
         for btn in (
             self.btn_download,
@@ -1291,12 +1321,26 @@ class TranscribeGUI(QWidget):
 
     def toggle_log_view(self):
         self.log_visible = not self.log_visible
-        if self.log_visible:
-            self.log_viewer.show()
-            self.btn_toggle_log.setText("로그창 숨기기")
+        self._sync_log_panel_state()
+
+    def _sync_log_panel_state(self):
+        show_log = bool(self.log_visible)
+        self.log_viewer.setVisible(show_log)
+        self.label_log_collapsed_hint.setVisible(not show_log)
+        self.label_log_collapsed_subhint.setVisible(not show_log)
+        self.btn_toggle_log.setText("로그창 숨기기" if show_log else "로그창 보기")
+        if show_log:
+            self.group_logs.setMinimumHeight(0)
+            self.group_logs.setMaximumHeight(16777215)
         else:
-            self.log_viewer.hide()
-            self.btn_toggle_log.setText("로그창 보기")
+            collapsed_h = (
+                self.btn_toggle_log.sizeHint().height()
+                + self.label_log_collapsed_hint.sizeHint().height()
+                + self.label_log_collapsed_subhint.sizeHint().height()
+                + 58
+            )
+            self.group_logs.setMinimumHeight(collapsed_h)
+            self.group_logs.setMaximumHeight(collapsed_h + 8)
 
     def set_transcribe_buttons_enabled(self, enabled: bool):
         self.btn_download.setEnabled(enabled)
