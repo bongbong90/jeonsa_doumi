@@ -1350,6 +1350,7 @@ class TranscribeGUI(QWidget):
         self.btn_move_and_transcribe = QPushButton("선택한 MP3 이동 후 전사 시작")
         self.btn_move_and_transcribe.setProperty("uiRole", "controlOutlinePrimary")
         self.btn_move_and_transcribe.setFixedHeight(48)
+        self.btn_move_and_transcribe.setEnabled(False)
         self.btn_transcribe_target = QPushButton("전사자료 폴더 전체 전사 시작")
         self.btn_transcribe_target.setProperty("uiRole", "controlPrimary")
         self.btn_transcribe_target.setFixedHeight(48)
@@ -1969,6 +1970,7 @@ class TranscribeGUI(QWidget):
         self._queue_item_signal_bound = True
         self._clear_file_queue_selection()
         self._refresh_file_list_empty_state()
+        self._update_checked_state()
 
     def _on_cell_checkbox_changed(self, row_idx: int, state: int):
         if row_idx < 0 or row_idx >= len(self.file_queue_rows):
@@ -1980,6 +1982,19 @@ class TranscribeGUI(QWidget):
             item = self.file_queue_table.item(row_idx, col)
             if item:
                 item.setBackground(QColor(row_bg))
+        self._update_checked_state()
+
+    def _update_checked_state(self):
+        checked_count = sum(1 for r in self.file_queue_rows if r.get("checked", False))
+        total = self.loaded_mp3_count
+        if checked_count > 0:
+            self.label_file_count.setText(
+                f"불러온 MP3 파일 수: {total}개 | 선택: {checked_count}개"
+            )
+        else:
+            self.label_file_count.setText(f"불러온 MP3 파일 수: {total}개")
+        if not self._is_transcribe_running():
+            self.btn_move_and_transcribe.setEnabled(checked_count > 0)
 
     def _remove_queue_row(self, file_name: str):
         target = os.path.basename(file_name).lower()
