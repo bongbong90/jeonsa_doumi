@@ -877,6 +877,7 @@ class TranscribeGUI(QWidget):
         self.eta_timer = QTimer(self)
         self.eta_timer.timeout.connect(self.refresh_eta_tick)
         self.eta_timer.start(1000)
+        QTimer.singleShot(0, self._sync_sidebar_height)
 
     def build_ui(self):
         root = QVBoxLayout(self)
@@ -923,14 +924,18 @@ class TranscribeGUI(QWidget):
 
         content_wrap = QFrame()
         content_wrap.setObjectName("ContentWrap")
+        content_wrap.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         content_layout = QHBoxLayout(content_wrap)
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
         root.addWidget(content_wrap, 1)
+        self.content_wrap = content_wrap
 
         sidebar = QFrame()
         sidebar.setObjectName("SidebarPane")
         sidebar.setFixedWidth(300)
+        sidebar.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.MinimumExpanding)
+        self.sidebar_pane = sidebar
         content_layout.addWidget(sidebar, 0)
 
         side_wrap = QVBoxLayout(sidebar)
@@ -943,32 +948,22 @@ class TranscribeGUI(QWidget):
         side_scroll.setWidgetResizable(True)
         side_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         side_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        side_wrap.addWidget(side_scroll)
+        side_scroll.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        side_scroll.setFixedWidth(300)
+        side_wrap.addWidget(side_scroll, 1)
+        self.sidebar_scroll = side_scroll
 
         side_content = QWidget()
         side_content.setObjectName("SidebarContent")
         side_content.setMinimumWidth(0)
-        side_content.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        side_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         side_scroll.setWidget(side_content)
         left = QVBoxLayout(side_content)
-        left.setContentsMargins(12, 12, 12, 12)
+        left.setContentsMargins(12, 20, 12, 20)
         left.setSpacing(8)
+        self.sidebar_sections_layout = left
 
-        title = QFrame()
-        title.setObjectName("SidebarCard")
-        title_box = QHBoxLayout(title)
-        title_box.setContentsMargins(16, 16, 16, 16)
-        title_box.setSpacing(10)
-        self.logo_card_icon = QLabel("")
-        self.logo_card_icon.setObjectName("TitleBrandIcon")
-        self.logo_card_icon.setFixedSize(28, 28)
-        self.logo_card_icon.setPixmap(create_brand_symbol_pixmap(28))
-        self.label_title_hint = QLabel("전사도우미")
-        self.label_title_hint.setObjectName("LogoCardTitle")
-        title_box.addWidget(self.logo_card_icon, 0, Qt.AlignVCenter)
-        title_box.addWidget(self.label_title_hint, 1, Qt.AlignVCenter)
-        left.addWidget(title)
-        self.group_title = title
+        self.group_title = None
 
         settings = QGroupBox("")
         settings.setObjectName("SidebarCard")
@@ -1068,12 +1063,15 @@ class TranscribeGUI(QWidget):
         self.log_viewer.setVisible(False)
         lbox.addWidget(self.log_viewer)
         left.addWidget(logs)
-        left.addStretch(1)
         self.group_logs = logs
 
         mainpane = QFrame()
         mainpane.setObjectName("MainPane")
+        mainpane.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.main_pane = mainpane
         content_layout.addWidget(mainpane, 1)
+        content_layout.setStretch(0, 0)
+        content_layout.setStretch(1, 1)
         right = QVBoxLayout(mainpane)
         right.setContentsMargins(20, 20, 20, 20)
         right.setSpacing(16)
@@ -1144,16 +1142,36 @@ class TranscribeGUI(QWidget):
         self.card_status.setObjectName("DashboardCard")
         self.card_status.setMinimumHeight(0)
         status_box = QVBoxLayout(self.card_status)
-        status_box.setContentsMargins(14, 10, 14, 10)
-        status_box.setSpacing(6)
+        status_box.setContentsMargins(16, 12, 16, 12)
+        status_box.setSpacing(0)
+        status_row = QHBoxLayout()
+        status_row.setContentsMargins(0, 0, 0, 0)
+        status_row.setSpacing(12)
+        status_text_col = QVBoxLayout()
+        status_text_col.setContentsMargins(0, 0, 0, 0)
+        status_text_col.setSpacing(4)
         self.status_icon = QLabel("↻")
         self.status_icon.setObjectName("StatusIconBubble")
-        self.status_icon.setAlignment(Qt.AlignCenter)
-        self.status_icon.setFixedSize(56, 56)
-        status_box.addWidget(self.status_icon, 0, Qt.AlignLeft)
-        status_box.addWidget(QLabel("CURRENT STATUS", objectName="DashboardMicroLabel"))
-        status_box.addWidget(self.label_status)
-        status_box.addStretch(1)
+        self.status_icon.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        self.status_icon.setFixedSize(40, 40)
+        self.status_icon.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        status_icon_container = QWidget()
+        status_icon_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        status_icon_container.setFixedWidth(40)
+        status_icon_col = QVBoxLayout(status_icon_container)
+        status_icon_col.setContentsMargins(0, 0, 0, 0)
+        status_icon_col.setSpacing(0)
+        status_icon_col.addStretch(1)
+        status_icon_col.addWidget(self.status_icon, 0, Qt.AlignHCenter | Qt.AlignVCenter)
+        status_icon_col.addStretch(1)
+        status_text_col.addStretch(1)
+        status_text_col.addWidget(QLabel("CURRENT STATUS", objectName="DashboardMicroLabel"))
+        self.label_status.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        status_text_col.addWidget(self.label_status)
+        status_text_col.addStretch(1)
+        status_row.addLayout(status_text_col, 1)
+        status_row.addWidget(status_icon_container, 0, Qt.AlignVCenter | Qt.AlignRight)
+        status_box.addLayout(status_row, 1)
         top_cards.addWidget(self.card_status, 1)
 
         self.card_progress = QFrame()
@@ -1176,16 +1194,36 @@ class TranscribeGUI(QWidget):
         self.card_eta.setObjectName("DashboardCard")
         self.card_eta.setMinimumHeight(0)
         eta_box = QVBoxLayout(self.card_eta)
-        eta_box.setContentsMargins(14, 10, 14, 10)
-        eta_box.setSpacing(6)
+        eta_box.setContentsMargins(16, 12, 16, 12)
+        eta_box.setSpacing(0)
+        eta_row = QHBoxLayout()
+        eta_row.setContentsMargins(0, 0, 0, 0)
+        eta_row.setSpacing(12)
+        eta_text_col = QVBoxLayout()
+        eta_text_col.setContentsMargins(0, 0, 0, 0)
+        eta_text_col.setSpacing(4)
         self.eta_icon = QLabel("◷")
         self.eta_icon.setObjectName("EtaIconBubble")
-        self.eta_icon.setAlignment(Qt.AlignCenter)
-        self.eta_icon.setFixedSize(56, 56)
-        eta_box.addWidget(self.eta_icon, 0, Qt.AlignLeft)
-        eta_box.addWidget(QLabel("REMAINING TIME", objectName="DashboardMicroLabel"))
-        eta_box.addWidget(self.label_total_eta)
-        eta_box.addStretch(1)
+        self.eta_icon.setAlignment(Qt.AlignVCenter | Qt.AlignHCenter)
+        self.eta_icon.setFixedSize(40, 40)
+        self.eta_icon.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        eta_icon_container = QWidget()
+        eta_icon_container.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        eta_icon_container.setFixedWidth(40)
+        eta_icon_col = QVBoxLayout(eta_icon_container)
+        eta_icon_col.setContentsMargins(0, 0, 0, 0)
+        eta_icon_col.setSpacing(0)
+        eta_icon_col.addStretch(1)
+        eta_icon_col.addWidget(self.eta_icon, 0, Qt.AlignHCenter | Qt.AlignVCenter)
+        eta_icon_col.addStretch(1)
+        eta_text_col.addStretch(1)
+        eta_text_col.addWidget(QLabel("REMAINING TIME", objectName="DashboardMicroLabel"))
+        self.label_total_eta.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        eta_text_col.addWidget(self.label_total_eta)
+        eta_text_col.addStretch(1)
+        eta_row.addLayout(eta_text_col, 1)
+        eta_row.addWidget(eta_icon_container, 0, Qt.AlignVCenter | Qt.AlignRight)
+        eta_box.addLayout(eta_row, 1)
         top_cards.addWidget(self.card_eta, 1)
         dbox.addWidget(self.top_cards_container)
         dbox.addSpacing(10)
@@ -1194,9 +1232,11 @@ class TranscribeGUI(QWidget):
         self.card_current.setObjectName("DashboardCard")
         self.card_current.setMinimumHeight(0)
         current_box = QVBoxLayout(self.card_current)
-        current_box.setContentsMargins(14, 10, 14, 10)
-        current_box.setSpacing(6)
+        current_box.setContentsMargins(14, 12, 14, 12)
+        current_box.setSpacing(8)
         current_box.addWidget(QLabel("CURRENT FILE", objectName="DashboardMicroLabel"))
+        self.label_current_file.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.label_current_file.setMinimumHeight(24)
         current_box.addWidget(self.label_current_file)
 
         current_header = QHBoxLayout()
@@ -1210,12 +1250,15 @@ class TranscribeGUI(QWidget):
 
         meta_row = QHBoxLayout()
         meta_row.setContentsMargins(0, 0, 0, 0)
-        meta_row.setSpacing(14)
+        meta_row.setSpacing(10)
         self.label_session_counter = QLabel("SESSION: 0 / 0", objectName="MetaCompactValue")
         self.label_output_value = QLabel("OUTPUT: 미설정", objectName="MetaCompactValue")
         self.label_current_eta.setWordWrap(False)
         self.label_session_counter.setWordWrap(False)
         self.label_output_value.setWordWrap(False)
+        self.label_current_eta.setMinimumHeight(24)
+        self.label_session_counter.setMinimumHeight(24)
+        self.label_output_value.setMinimumHeight(24)
         self.label_current_eta.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.label_session_counter.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self.label_output_value.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
@@ -1294,8 +1337,8 @@ class TranscribeGUI(QWidget):
         controls.setObjectName("ControlSection")
         controls.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         cbox = QVBoxLayout(controls)
-        cbox.setContentsMargins(14, 12, 14, 12)
-        cbox.setSpacing(6)
+        cbox.setContentsMargins(14, 14, 14, 14)
+        cbox.setSpacing(8)
         self.label_section_controls = QLabel("실행 제어", objectName="SectionTitle")
         cbox.addWidget(self.label_section_controls)
         self.label_controls_helper = QLabel("", objectName="HelperText")
@@ -1316,7 +1359,7 @@ class TranscribeGUI(QWidget):
 
         row2 = QHBoxLayout()
         row2.setSpacing(10)
-        self.btn_move_files = QPushButton("선택한 MP3를 전사자료 폴더로 이동")
+        self.btn_move_files = QPushButton("선택 MP3 전사자료 폴더로 이동")
         self.btn_move_files.setProperty("uiRole", "controlOutline")
         self.btn_move_files.setFixedHeight(44)
         self.btn_stop_now = QPushButton("즉시 중지")
@@ -1447,11 +1490,6 @@ class TranscribeGUI(QWidget):
                 border-radius: 2px;
                 background: #ffffff;
             }
-            QLabel#LogoCardTitle {
-                color: #00236f;
-                font-size: 16px;
-                font-weight: 700;
-            }
             QLabel#SectionTitle {
                 color: #334155;
                 font-size: 14px;
@@ -1532,16 +1570,16 @@ class TranscribeGUI(QWidget):
             }
             QLabel#StatusIconBubble {
                 background: #eff6ff;
-                border-radius: 24px;
+                border-radius: 20px;
                 color: #00236f;
-                font-size: 30px;
+                font-size: 24px;
                 font-weight: 600;
             }
             QLabel#EtaIconBubble {
                 background: #fff7ed;
-                border-radius: 24px;
+                border-radius: 20px;
                 color: #f39461;
-                font-size: 30px;
+                font-size: 24px;
                 font-weight: 600;
             }
             QLabel#DashboardMicroLabel {
@@ -1672,9 +1710,9 @@ class TranscribeGUI(QWidget):
                 color: #94a3b8;
             }
             QPushButton:disabled {
-                border: 1px solid #e2e8f0;
+                border: 1px solid #cbd5e1;
                 background: #f1f5f9;
-                color: #94a3b8;
+                color: #64748b;
             }
             QCheckBox {
                 spacing: 8px;
@@ -2021,7 +2059,6 @@ class TranscribeGUI(QWidget):
     def apply_typography_fit_defaults(self):
         # 주요 고정 높이 토큰을 강제해 1366x768에서 잘림을 방지한다.
         side_widgets = (
-            self.group_title,
             self.group_settings,
             self.group_options,
             self.group_logs,
@@ -2046,10 +2083,10 @@ class TranscribeGUI(QWidget):
         self.btn_target.setFixedHeight(36)
         self.btn_load_files.setFixedHeight(36)
         self.btn_toggle_log.setFixedHeight(36)
-        self.btn_move_and_transcribe.setFixedHeight(36)
-        self.btn_transcribe_target.setFixedHeight(36)
-        self.btn_move_files.setFixedHeight(32)
-        self.btn_stop_now.setFixedHeight(32)
+        self.btn_move_and_transcribe.setFixedHeight(44)
+        self.btn_transcribe_target.setFixedHeight(44)
+        self.btn_move_files.setFixedHeight(38)
+        self.btn_stop_now.setFixedHeight(38)
 
         for metric_label in (
             self.label_total_progress_text,
@@ -2069,16 +2106,16 @@ class TranscribeGUI(QWidget):
         self.total_progress_bar.setMinimumHeight(8)
         self.total_progress_bar.setMaximumHeight(8)
 
-        top_card_h = 108
+        top_card_h = 92
         for icon in (self.status_icon, self.eta_icon):
-            icon.setFixedSize(48, 48)
+            icon.setFixedSize(40, 40)
         self.top_cards_container.setMinimumHeight(top_card_h)
         self.top_cards_container.setMaximumHeight(top_card_h)
         for card in (self.card_status, self.card_progress, self.card_eta):
             card.setMinimumHeight(top_card_h)
             card.setMaximumHeight(top_card_h)
 
-        detail_min_h = 116
+        detail_min_h = 132
         self.card_current.setMinimumHeight(detail_min_h)
         self.card_current.setMaximumHeight(detail_min_h)
         dashboard_h = top_card_h + detail_min_h + 48
@@ -2110,7 +2147,6 @@ class TranscribeGUI(QWidget):
             widget.setFont(f)
 
         _set_weight(self.label_title_text, 550)
-        _set_weight(self.label_title_hint, 500)
 
         for group in (self.group_settings, self.group_options, self.group_logs, self.group_dashboard, self.group_files, self.group_controls):
             _set_weight(group, 550)
@@ -2180,13 +2216,10 @@ class TranscribeGUI(QWidget):
         self.log_viewer.document().setDefaultFont(log_font)
 
     def apply_left_section_layout_constraints(self):
-        # Keep title card fixed, allow other cards to stretch naturally.
-        title_h = self.group_title.sizeHint().height()
-        self.group_title.setMinimumHeight(title_h)
-        self.group_title.setMaximumHeight(title_h)
-        for section in (self.group_settings, self.group_options):
+        for section in (self.group_settings, self.group_options, self.group_logs):
             section.setMinimumHeight(0)
             section.setMaximumHeight(16777215)
+            section.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
     def _elide_for_label(self, label: QLabel, text: str, mode=Qt.ElideRight) -> str:
         available = max(120, label.width() - 14)
@@ -2475,6 +2508,74 @@ class TranscribeGUI(QWidget):
         super().resizeEvent(event)
         self._apply_status_and_meta_labels()
         self._refresh_path_labels()
+        QTimer.singleShot(0, self._sync_sidebar_height)
+
+    def _sync_sidebar_height(self):
+        sidebar = getattr(self, "sidebar_pane", None)
+        mainpane = getattr(self, "main_pane", None)
+        if sidebar is None or mainpane is None:
+            return
+        target_h = max(0, int(mainpane.height()))
+        if target_h <= 0:
+            return
+        if sidebar.minimumHeight() != target_h:
+            sidebar.setMinimumHeight(target_h)
+        if sidebar.maximumHeight() != target_h:
+            sidebar.setMaximumHeight(target_h)
+        self._sync_sidebar_panel_heights()
+
+    def _sync_sidebar_panel_heights(self):
+        sidebar = getattr(self, "sidebar_pane", None)
+        left = getattr(self, "sidebar_sections_layout", None)
+        if sidebar is None or left is None:
+            return
+        if not all(hasattr(self, name) for name in ("group_settings", "group_options", "group_logs")):
+            return
+
+        margins = left.contentsMargins()
+        spacing = max(0, left.spacing())
+        available = int(sidebar.height()) - margins.top() - margins.bottom() - (spacing * 2)
+        if available <= 0:
+            return
+
+        settings_min = max(220, int(self.group_settings.minimumSizeHint().height()))
+        options_min = max(118, int(self.group_options.minimumSizeHint().height()))
+        collapsed_logs_hint = (
+            self.btn_toggle_log.minimumHeight()
+            + self.label_log_collapsed_hint.sizeHint().height()
+            + self.label_log_collapsed_subhint.sizeHint().height()
+            + 42
+        )
+        logs_min = max(
+            220 if self.log_visible else 120,
+            int(self.group_logs.minimumSizeHint().height()),
+            int(collapsed_logs_hint) if not self.log_visible else 0,
+        )
+
+        total_min = settings_min + options_min + logs_min
+        extra = max(0, available - total_min)
+
+        if self.log_visible:
+            add_settings = int(extra * 0.30)
+            add_options = int(extra * 0.18)
+        else:
+            add_settings = int(extra * 0.46)
+            add_options = int(extra * 0.22)
+        add_logs = extra - add_settings - add_options
+
+        settings_h = settings_min + add_settings
+        options_h = options_min + add_options
+        logs_h = logs_min + add_logs
+
+        if total_min > available:
+            scale = available / float(total_min)
+            settings_h = max(180, int(settings_min * scale))
+            options_h = max(96, int(options_min * scale))
+            logs_h = max(96, available - settings_h - options_h)
+
+        self.group_settings.setFixedHeight(settings_h)
+        self.group_options.setFixedHeight(options_h)
+        self.group_logs.setFixedHeight(logs_h)
 
     def get_base_dir(self) -> str:
         return get_runtime_base_dir()
@@ -2834,19 +2935,10 @@ class TranscribeGUI(QWidget):
         if show_log:
             self.log_viewer.setMinimumHeight(164)
             self.log_viewer.setMaximumHeight(212)
-            self.group_logs.setMinimumHeight(252)
-            self.group_logs.setMaximumHeight(318)
         else:
             self.log_viewer.setMinimumHeight(0)
             self.log_viewer.setMaximumHeight(0)
-            collapsed_h = (
-                self.btn_toggle_log.minimumHeight()
-                + self.label_log_collapsed_hint.sizeHint().height()
-                + self.label_log_collapsed_subhint.sizeHint().height()
-                + 42
-            )
-            self.group_logs.setMinimumHeight(collapsed_h)
-            self.group_logs.setMaximumHeight(collapsed_h + 8)
+        QTimer.singleShot(0, self._sync_sidebar_panel_heights)
 
     def set_transcribe_buttons_enabled(self, enabled: bool):
         self.btn_download.setEnabled(enabled)
