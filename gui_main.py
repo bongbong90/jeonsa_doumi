@@ -1284,13 +1284,19 @@ class TranscribeGUI(QWidget):
         header_row.setSpacing(8)
         self.label_section_files = QLabel("전사 대기열", objectName="QueueTitle")
         header_row.addWidget(self.label_section_files, 1)
-        self.btn_filter_all = QPushButton("Filter All")
+        self.btn_filter_all = QPushButton("전체 선택")
         self.btn_filter_all.setObjectName("QueueHeaderButton")
         self.btn_filter_all.setFixedHeight(28)
+        self.btn_filter_all.setEnabled(False)
+        self.btn_uncheck_all = QPushButton("전체 해제")
+        self.btn_uncheck_all.setObjectName("QueueHeaderButton")
+        self.btn_uncheck_all.setFixedHeight(28)
+        self.btn_uncheck_all.setEnabled(False)
         self.btn_clear_done = QPushButton("Clear Done")
         self.btn_clear_done.setObjectName("QueueHeaderButton")
         self.btn_clear_done.setFixedHeight(28)
         header_row.addWidget(self.btn_filter_all, 0)
+        header_row.addWidget(self.btn_uncheck_all, 0)
         header_row.addWidget(self.btn_clear_done, 0)
         fbox.addLayout(header_row)
 
@@ -1415,6 +1421,7 @@ class TranscribeGUI(QWidget):
         self.btn_stop_now.clicked.connect(self.request_immediate_stop)
         self.btn_toggle_log.clicked.connect(self.toggle_log_view)
         self.btn_filter_all.clicked.connect(self._mark_all_queue_checked)
+        self.btn_uncheck_all.clicked.connect(self._uncheck_all_queue)
         self.btn_clear_done.clicked.connect(self._clear_done_queue_rows)
         self.chk_notify_each_file.stateChanged.connect(self.save_ui_preferences)
         self.chk_notify_total.stateChanged.connect(self.save_ui_preferences)
@@ -1987,12 +1994,15 @@ class TranscribeGUI(QWidget):
     def _update_checked_state(self):
         checked_count = sum(1 for r in self.file_queue_rows if r.get("checked", False))
         total = self.loaded_mp3_count
+        has_files = bool(self.file_queue_rows)
         if checked_count > 0:
             self.label_file_count.setText(
                 f"불러온 MP3 파일 수: {total}개 | 선택: {checked_count}개"
             )
         else:
             self.label_file_count.setText(f"불러온 MP3 파일 수: {total}개")
+        self.btn_filter_all.setEnabled(has_files)
+        self.btn_uncheck_all.setEnabled(has_files)
         if not self._is_transcribe_running():
             self.btn_move_and_transcribe.setEnabled(checked_count > 0)
 
@@ -2029,6 +2039,11 @@ class TranscribeGUI(QWidget):
     def _mark_all_queue_checked(self):
         for row in self.file_queue_rows:
             row["checked"] = True
+        self._refresh_file_queue_table()
+
+    def _uncheck_all_queue(self):
+        for row in self.file_queue_rows:
+            row["checked"] = False
         self._refresh_file_queue_table()
 
     def _clear_done_queue_rows(self):
