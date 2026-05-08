@@ -1282,7 +1282,7 @@ class TranscribeGUI(QWidget):
         header_row = QHBoxLayout()
         header_row.setContentsMargins(0, 0, 0, 0)
         header_row.setSpacing(8)
-        self.label_section_files = QLabel("File Queue", objectName="QueueTitle")
+        self.label_section_files = QLabel("전사 대기열", objectName="QueueTitle")
         header_row.addWidget(self.label_section_files, 1)
         self.btn_filter_all = QPushButton("Filter All")
         self.btn_filter_all.setObjectName("QueueHeaderButton")
