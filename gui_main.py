@@ -87,7 +87,7 @@ class CheckboxIndicatorStyle(QProxyStyle):
         if element != QStyle.PE_IndicatorCheckBox:
             return super().drawPrimitive(element, option, painter, widget)
 
-        rect = option.rect.adjusted(0, 0, -1, -1)
+        rect = option.rect.adjusted(1, 1, -1, -1)
         checked = bool(option.state & QStyle.State_On)
         enabled = bool(option.state & QStyle.State_Enabled)
 
