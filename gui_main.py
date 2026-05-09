@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QAbstractItemView,
     QCheckBox,
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
@@ -68,6 +69,12 @@ SETTINGS_KEY_TARGET_DIR = "ui/target_folder"
 SETTINGS_KEY_NOTIFY_EACH = "ui/notify_each_file"
 SETTINGS_KEY_NOTIFY_TOTAL = "ui/notify_total"
 SETTINGS_KEY_SHUTDOWN_AFTER_DONE = "ui/shutdown_after_done"
+SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS = "ui/shutdown_wait_seconds"
+SHUTDOWN_WAIT_OPTIONS = (
+    (0, "\uC989\uC2DC"),
+    (15, "15\uCD08"),
+    (30, "30\uCD08"),
+)
 
 QUEUE_STATUS_WAITING = "WAITING"
 QUEUE_STATUS_PROCESSING = "PROCESSING"
@@ -1030,11 +1037,19 @@ class TranscribeGUI(QWidget):
         self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
         self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
+        self.shutdown_wait_combo = QComboBox()
+        self.shutdown_wait_combo.setObjectName("ShutdownWaitCombo")
+        self.shutdown_wait_combo.setFixedHeight(34)
+        for seconds, label in SHUTDOWN_WAIT_OPTIONS:
+            self.shutdown_wait_combo.addItem(label, seconds)
+        self.shutdown_wait_combo.setCurrentIndex(0)
+        self.shutdown_wait_combo.setEnabled(False)
         self.chk_notify_each_file.setChecked(True)
         self.chk_notify_total.setChecked(True)
         obox.addWidget(self.chk_notify_each_file)
         obox.addWidget(self.chk_notify_total)
         obox.addWidget(self.shutdown_checkbox)
+        obox.addWidget(self.shutdown_wait_combo)
         left.addWidget(options)
         self.group_options = options
 
@@ -1429,11 +1444,14 @@ class TranscribeGUI(QWidget):
         self.btn_clear_done.clicked.connect(self._clear_done_queue_rows)
         self.chk_notify_each_file.stateChanged.connect(self.save_ui_preferences)
         self.chk_notify_total.stateChanged.connect(self.save_ui_preferences)
+        self.shutdown_checkbox.stateChanged.connect(self._sync_shutdown_wait_combo_state)
         self.shutdown_checkbox.stateChanged.connect(self.save_ui_preferences)
+        self.shutdown_wait_combo.currentIndexChanged.connect(self.save_ui_preferences)
         self.tab_transcriptions.clicked.connect(lambda: self._switch_main_tab("transcriptions"))
         self.tab_dashboard.clicked.connect(lambda: self._switch_main_tab("dashboard"))
         self.tab_folders.clicked.connect(lambda: self._switch_main_tab("folders"))
 
+        self._sync_shutdown_wait_combo_state()
         self._switch_main_tab("transcriptions")
         self._sync_log_panel_state()
         self._refresh_file_list_empty_state()
@@ -1734,6 +1752,30 @@ class TranscribeGUI(QWidget):
             QCheckBox::indicator {
                 width: 16px;
                 height: 16px;
+            }
+            QComboBox#ShutdownWaitCombo {
+                border: 1px solid #e2e8f0;
+                border-radius: 2px;
+                background: #ffffff;
+                color: #334155;
+                padding: 0 10px;
+                min-height: 34px;
+            }
+            QComboBox#ShutdownWaitCombo::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox#ShutdownWaitCombo QAbstractItemView {
+                border: 1px solid #e2e8f0;
+                background: #ffffff;
+                color: #334155;
+                selection-background-color: #eff6ff;
+                selection-color: #1e40af;
+            }
+            QComboBox#ShutdownWaitCombo:disabled {
+                border: 1px solid #cbd5e1;
+                background: #f1f5f9;
+                color: #94a3b8;
             }
             QProgressBar {
                 background: #f1f5f9;
@@ -2518,8 +2560,13 @@ class TranscribeGUI(QWidget):
             self.shutdown_checkbox.setChecked(
                 bool(self.ui_settings.value(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, False, type=bool))
             )
+            shutdown_wait_seconds = int(
+                self.ui_settings.value(SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS, 0, type=int)
+            )
+            self._set_shutdown_wait_seconds(shutdown_wait_seconds)
         except Exception:
             pass
+        self._sync_shutdown_wait_combo_state()
         self._refresh_path_labels()
         QTimer.singleShot(0, self._refresh_path_labels)
         self._refresh_file_list_empty_state()
@@ -2531,9 +2578,30 @@ class TranscribeGUI(QWidget):
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_EACH, self.chk_notify_each_file.isChecked())
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_TOTAL, self.chk_notify_total.isChecked())
             self.ui_settings.setValue(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, self.shutdown_checkbox.isChecked())
+            self.ui_settings.setValue(SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS, self._get_shutdown_wait_seconds())
             self.ui_settings.sync()
         except Exception:
             pass
+
+    def _set_shutdown_wait_seconds(self, seconds: int):
+        safe_seconds = max(0, int(seconds))
+        idx = self.shutdown_wait_combo.findData(safe_seconds)
+        if idx < 0:
+            idx = 0
+        if self.shutdown_wait_combo.currentIndex() != idx:
+            self.shutdown_wait_combo.setCurrentIndex(idx)
+
+    def _get_shutdown_wait_seconds(self) -> int:
+        value = self.shutdown_wait_combo.currentData()
+        try:
+            return max(0, int(value))
+        except Exception:
+            return 0
+
+    def _sync_shutdown_wait_combo_state(self):
+        enabled = self.shutdown_checkbox.isChecked()
+        if self.shutdown_wait_combo.isEnabled() != enabled:
+            self.shutdown_wait_combo.setEnabled(enabled)
 
     def _set_path_label(self, label: QLabel, title: str, path: str):
         if not path:
@@ -2628,10 +2696,10 @@ class TranscribeGUI(QWidget):
         logs_h = logs_min + add_logs
 
         if total_min > available:
-            scale = available / float(total_min)
-            settings_h = max(180, int(settings_min * scale))
-            options_h = max(96, int(options_min * scale))
-            logs_h = max(96, available - settings_h - options_h)
+            # Keep each card's natural height and allow sidebar scrolling on overflow.
+            settings_h = settings_min
+            options_h = options_min
+            logs_h = logs_min
 
         self.group_settings.setFixedHeight(settings_h)
         self.group_options.setFixedHeight(options_h)
@@ -3036,7 +3104,10 @@ class TranscribeGUI(QWidget):
         ok_btn.clicked.connect(dialog.accept)
         dialog.exec()
 
-    def confirm_shutdown_after_completion(self) -> bool:
+    def confirm_shutdown_after_completion(self, wait_seconds: int = 0) -> bool:
+        wait_seconds = max(0, int(wait_seconds))
+        if wait_seconds <= 0:
+            return True
         if self.toast_window is not None and self.toast_window.isVisible():
             self.toast_window.hide()
         if self.isHidden():
@@ -3045,41 +3116,73 @@ class TranscribeGUI(QWidget):
         self.activateWindow()
 
         dialog, button_box = self._build_message_box(
-            "전사 완료",
-            "전체 전사가 완료되었습니다. 컴퓨터를 종료할까요?",
+            "\uC804\uC0AC \uC644\uB8CC",
+            "\uC804\uCCB4 \uC804\uC0AC\uAC00 \uC644\uB8CC\uB418\uC5C8\uC2B5\uB2C8\uB2E4. \uCEF4\uD4E8\uD130\uB97C \uC885\uB8CC\uD560\uAE4C\uC694?",
             QMessageBox.Question,
             parent_override=self,
         )
         dialog.setWindowFlag(Qt.WindowStaysOnTopHint, True)
         dialog.setWindowModality(Qt.ApplicationModal)
-        shutdown_btn = button_box.addButton("지금 종료", QDialogButtonBox.AcceptRole)
+        shutdown_btn = button_box.addButton(
+            f"\uC9C0\uAE08 \uC885\uB8CC ({wait_seconds})",
+            QDialogButtonBox.AcceptRole,
+        )
         shutdown_btn.setObjectName("DialogPrimaryButton")
-        cancel_btn = button_box.addButton("취소", QDialogButtonBox.RejectRole)
+        cancel_btn = button_box.addButton("\uCDE8\uC18C", QDialogButtonBox.RejectRole)
         cancel_btn.setObjectName("DialogSecondaryButton")
+
+        countdown_timer = QTimer(dialog)
+        countdown_timer.setInterval(1000)
+        remaining_seconds = wait_seconds
+
+        def _stop_countdown():
+            if countdown_timer.isActive():
+                countdown_timer.stop()
+
+        def _tick_shutdown_countdown():
+            nonlocal remaining_seconds
+            remaining_seconds -= 1
+            if remaining_seconds <= 0:
+                _stop_countdown()
+                dialog.done(1)
+                return
+            shutdown_btn.setText(f"\uC9C0\uAE08 \uC885\uB8CC ({remaining_seconds})")
+
         shutdown_btn.clicked.connect(lambda: dialog.done(1))
         cancel_btn.clicked.connect(lambda: dialog.done(0))
+        dialog.finished.connect(lambda _result: _stop_countdown())
+        countdown_timer.timeout.connect(_tick_shutdown_countdown)
+        countdown_timer.start()
         cancel_btn.setDefault(True)
         cancel_btn.setAutoDefault(True)
         dialog.raise_()
         dialog.activateWindow()
         result = dialog.exec()
+        _stop_countdown()
         print(f"[DEBUG-POPUP] dialog.exec() returned {result}", flush=True)
         return result == 1
 
     def request_shutdown_after_completion(self):
         self.shutdown_prompt_pending_for_run = False
-        self.append_log_text(f"[GUI] 종료 옵션={self.shutdown_checkbox.isChecked()}, run_mode={self.run_mode}\n")
+        self.append_log_text(f"[GUI] \uC885\uB8CC \uC635\uC158={self.shutdown_checkbox.isChecked()}, run_mode={self.run_mode}\n")
         if not self.shutdown_checkbox.isChecked():
             return
         if self.shutdown_prompt_shown_for_run:
             return
         self.shutdown_prompt_shown_for_run = True
-        self.append_log_text("[GUI] 전체 완료 후 종료 확인 팝업 표시\n")
-        if self.confirm_shutdown_after_completion():
-            self.append_log_text("[GUI] 사용자 확인으로 컴퓨터 종료 실행\n")
+
+        shutdown_wait_seconds = self._get_shutdown_wait_seconds()
+        if shutdown_wait_seconds <= 0:
+            self.append_log_text("[GUI] \uC885\uB8CC \uB300\uAE30\uC2DC\uAC04=\uC989\uC2DC, \uD31D\uC5C5 \uC5C6\uC774 \uC885\uB8CC \uC2E4\uD589\n")
+            self.shutdown_computer()
+            return
+
+        self.append_log_text(f"[GUI] \uC885\uB8CC \uB300\uAE30\uC2DC\uAC04={shutdown_wait_seconds}\uCD08 \uCE74\uC6B4\uD2B8\uB2E4\uC6B4 \uC2DC\uC791\n")
+        if self.confirm_shutdown_after_completion(shutdown_wait_seconds):
+            self.append_log_text("[GUI] \uC0AC\uC6A9\uC790 \uD655\uC778\uC73C\uB85C \uCEF4\uD4E8\uD130 \uC885\uB8CC \uC2E4\uD589\n")
             self.shutdown_computer()
         else:
-            self.append_log_text("[GUI] 사용자 취소로 컴퓨터 종료 취소\n")
+            self.append_log_text("[GUI] \uC0AC\uC6A9\uC790 \uCDE8\uC18C\uB85C \uCEF4\uD4E8\uD130 \uC885\uB8CC \uCDE8\uC18C\n")
 
     def ensure_main_window_visible(self):
         try:
