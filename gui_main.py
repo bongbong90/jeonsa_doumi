@@ -64,7 +64,6 @@ ETA_EMPTY_TEXT = "-"
 APP_DISPLAY_NAME = "\uC804\uC0AC\uB3C4\uC6B0\uBBF8"
 APP_USER_MODEL_ID = "com.codex.transcribehelper"
 UI_DEFAULT_FONT_SIZE = 10
-SETTINGS_KEY_DOWNLOAD_DIR = "ui/download_folder"
 SETTINGS_KEY_TARGET_DIR = "ui/target_folder"
 SETTINGS_KEY_NOTIFY_EACH = "ui/notify_each_file"
 SETTINGS_KEY_NOTIFY_TOTAL = "ui/notify_total"
@@ -483,8 +482,8 @@ def collect_font_application_diagnostics(window: "TranscribeGUI", expected_famil
         ("section_settings", window.group_settings),
         ("section_options", window.group_options),
         ("button_primary", window.btn_move_and_transcribe),
-        ("button_side", window.btn_download),
-        ("path_label", window.label_download),
+        ("button_side", window.btn_target),
+        ("path_label", window.label_target),
         ("dashboard_label", window.label_status),
         ("helper_text", window.label_settings_hint),
         ("log_viewer", window.log_viewer),
@@ -824,7 +823,6 @@ class TranscribeGUI(QWidget):
         self.resize(1320, 790)
         self.setMinimumSize(1024, 680)
 
-        self.download_folder = ""
         self.target_folder = ""
         self.process = None
         self.log_visible = False
@@ -988,21 +986,6 @@ class TranscribeGUI(QWidget):
         self.label_settings_hint.setVisible(False)
         sbox.addWidget(self.label_settings_hint)
         sbox.addSpacing(10)
-
-        self.label_download_title = QLabel("DOWNLOAD PATH", objectName="PathTitle")
-        sbox.addWidget(self.label_download_title)
-        sbox.addSpacing(4)
-        self.label_download = QLabel("폴더를 선택하세요", objectName="PathLabel")
-        self.label_download.setFixedHeight(36)
-        self.label_download.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.label_download.setWordWrap(False)
-        sbox.addWidget(self.label_download)
-        sbox.addSpacing(6)
-        self.btn_download = QPushButton("다운로드 폴더 선택")
-        self.btn_download.setProperty("uiRole", "side")
-        self.btn_download.setFixedHeight(36)
-        sbox.addWidget(self.btn_download)
-        sbox.addSpacing(12)
 
         self.label_target_title = QLabel("TRANSCRIPTION PATH", objectName="PathTitle")
         sbox.addWidget(self.label_target_title)
@@ -1431,7 +1414,6 @@ class TranscribeGUI(QWidget):
         self._apply_status_and_meta_labels()
         self._refresh_path_labels()
 
-        self.btn_download.clicked.connect(self.select_download_folder)
         self.btn_target.clicked.connect(self.select_target_folder)
         self.btn_load_files.clicked.connect(self.load_mp3_files)
         self.btn_move_files.clicked.connect(self.move_selected_files)
@@ -2124,8 +2106,8 @@ class TranscribeGUI(QWidget):
         self._refresh_file_queue_table()
         self.update_total_progress_display()
 
-    def _get_checked_queue_files(self) -> list[str]:
-        checked: list[str] = []
+    def _get_checked_queue_rows(self) -> list[dict]:
+        checked: list[dict] = []
         for row_idx, row_data in enumerate(self.file_queue_rows):
             container = self.file_queue_table.cellWidget(row_idx, 0)
             is_checked = False
@@ -2135,20 +2117,33 @@ class TranscribeGUI(QWidget):
                     is_checked = cb.isChecked()
             row_data["checked"] = is_checked
             if is_checked:
-                checked.append(str(row_data.get("filename", "")))
+                checked.append(row_data)
         return checked
 
-    def _rebuild_queue_from_files(self, file_names: list[str]):
-        self.file_queue_rows = []
-        for name in file_names:
-            duration = "-"
-            if self.download_folder:
-                full_path = os.path.join(self.download_folder, name)
-                duration = self._detect_duration_mmss(full_path)
+    def _rebuild_queue_from_files(self, file_paths: list[str], append: bool = False):
+        if not append:
+            self.file_queue_rows = []
+        existing_paths = set()
+        for row in self.file_queue_rows:
+            src = str(row.get("source_path", "")).strip()
+            if not src:
+                continue
+            existing_paths.add(os.path.normcase(os.path.abspath(src)))
+        for file_path in file_paths:
+            normalized_path = self._normalize_saved_folder_path(file_path)
+            if not normalized_path or not normalized_path.lower().endswith(".mp3"):
+                continue
+            source_key = os.path.normcase(os.path.abspath(normalized_path))
+            if source_key in existing_paths:
+                continue
+            existing_paths.add(source_key)
+            display_name = os.path.basename(normalized_path)
+            duration = self._detect_duration_mmss(normalized_path)
             self.file_queue_rows.append(
                 {
-                    "filename": name,
-                    "transcribe_name": name,
+                    "filename": display_name,
+                    "source_path": normalized_path,
+                    "transcribe_name": display_name,
                     "duration": duration,
                     "status": QUEUE_STATUS_WAITING,
                     "checked": False,
@@ -2164,9 +2159,7 @@ class TranscribeGUI(QWidget):
             self.group_settings,
             self.group_options,
             self.group_logs,
-            self.label_download,
             self.label_target,
-            self.btn_download,
             self.btn_target,
             self.btn_load_files,
             self.chk_notify_each_file,
@@ -2176,12 +2169,11 @@ class TranscribeGUI(QWidget):
         for widget in side_widgets:
             widget.setMinimumWidth(0)
 
-        for lbl in [self.label_download, self.label_target]:
+        for lbl in [self.label_target]:
             lbl.setMinimumHeight(36)
             lbl.setMaximumHeight(36)
             lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        self.btn_download.setFixedHeight(36)
         self.btn_target.setFixedHeight(36)
         self.btn_load_files.setFixedHeight(36)
         self.btn_toggle_log.setFixedHeight(36)
@@ -2264,7 +2256,6 @@ class TranscribeGUI(QWidget):
             _set_weight(lbl, 600)
 
         for btn in (
-            self.btn_download,
             self.btn_target,
             self.btn_load_files,
             self.btn_toggle_log,
@@ -2286,7 +2277,7 @@ class TranscribeGUI(QWidget):
         ):
             _set_weight(lbl, 450)
 
-        for lbl in (self.label_download, self.label_target):
+        for lbl in (self.label_target,):
             _set_weight(lbl, 500)
 
         _set_weight(self.label_status, 550)
@@ -2545,9 +2536,6 @@ class TranscribeGUI(QWidget):
 
     def load_ui_preferences(self):
         try:
-            self.download_folder = self._normalize_saved_folder_path(
-                self.ui_settings.value(SETTINGS_KEY_DOWNLOAD_DIR, "")
-            )
             self.target_folder = self._normalize_saved_folder_path(
                 self.ui_settings.value(SETTINGS_KEY_TARGET_DIR, "")
             )
@@ -2573,7 +2561,6 @@ class TranscribeGUI(QWidget):
 
     def save_ui_preferences(self):
         try:
-            self.ui_settings.setValue(SETTINGS_KEY_DOWNLOAD_DIR, self.download_folder or "")
             self.ui_settings.setValue(SETTINGS_KEY_TARGET_DIR, self.target_folder or "")
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_EACH, self.chk_notify_each_file.isChecked())
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_TOTAL, self.chk_notify_total.isChecked())
@@ -2620,11 +2607,6 @@ class TranscribeGUI(QWidget):
         label.update()
 
     def _refresh_path_labels(self):
-        self._set_path_label(
-            self.label_download,
-            "\uB2E4\uC6B4\uB85C\uB4DC \uD3F4\uB354",
-            self.download_folder,
-        )
         self._set_path_label(
             self.label_target,
             "\uC804\uC0AC\uC790\uB8CC \uD3F4\uB354",
@@ -2889,9 +2871,9 @@ class TranscribeGUI(QWidget):
         return self.toast_window
 
     def get_preferred_folder_path(self) -> str:
-        for path in (self.target_folder, self.download_folder):
-            if path and os.path.isdir(path):
-                return path
+        path = self.target_folder
+        if path and os.path.isdir(path):
+            return path
         return ""
 
     def open_preferred_folder(self):
@@ -3233,7 +3215,6 @@ class TranscribeGUI(QWidget):
         QTimer.singleShot(0, self._sync_sidebar_panel_heights)
 
     def set_transcribe_buttons_enabled(self, enabled: bool):
-        self.btn_download.setEnabled(enabled)
         self.btn_target.setEnabled(enabled)
         self.btn_load_files.setEnabled(enabled)
         self.btn_move_files.setEnabled(enabled)
@@ -3294,34 +3275,6 @@ class TranscribeGUI(QWidget):
                 "\uC2E4\uC2DC\uAC04 \uCD9C\uB825: GUI\uC5D0 \uC9C1\uC811 \uC5F0\uACB0\uB428"
             )
 
-    def select_download_folder(self):
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "\uB2E4\uC6B4\uB85C\uB4DC \uD3F4\uB354 \uC120\uD0DD",
-        )
-        if folder:
-            self.download_folder = self._normalize_saved_folder_path(folder)
-            self._refresh_path_labels()
-            self.save_ui_preferences()
-            self._refresh_path_labels()
-            self.file_queue_rows = []
-            self._refresh_file_queue_table()
-            self.loaded_mp3_count = 0
-            if not self._is_transcribe_running():
-                self.total_target_mp3_files = 0
-                self.completed_files.clear()
-                self.last_completed_file_name = ""
-                self.current_file_name = ""
-                self.current_file_started_at = None
-                self.update_current_file_progress(0, force=True)
-                self._set_current_file_text("\uD604\uC7AC \uCC98\uB9AC \uC911 \uD30C\uC77C: \uC5C6\uC74C")
-                self._set_status_text("\uB300\uAE30 \uC911")
-            self.label_file_count.setText(
-                "\uBD88\uB7EC\uC628 MP3 \uD30C\uC77C \uC218: 0\uAC1C"
-            )
-            self.update_total_progress_display()
-            self._refresh_file_list_empty_state()
-
     def select_target_folder(self):
         folder = QFileDialog.getExistingDirectory(
             self,
@@ -3335,12 +3288,16 @@ class TranscribeGUI(QWidget):
             self.update_session_label()
 
     def load_mp3_files(self, show_empty_message=True):
-        if not self.download_folder:
-            self.show_warning_message("경고", "먼저 다운로드 폴더를 선택해 주세요.")
-            return
         try:
-            files = sorted([x for x in os.listdir(self.download_folder) if x.lower().endswith(".mp3")])
-            self._rebuild_queue_from_files(files)
+            selected_files, _ = QFileDialog.getOpenFileNames(
+                self,
+                "MP3 파일 선택",
+                "",
+                "MP3 Files (*.mp3)",
+            )
+            if not selected_files:
+                return
+            self._rebuild_queue_from_files(sorted(selected_files), append=True)
             if not self._is_transcribe_running() and show_empty_message:
                 self.total_target_mp3_files = 0
                 self.completed_files.clear()
@@ -3354,37 +3311,39 @@ class TranscribeGUI(QWidget):
                 self._set_status_text("\uB300\uAE30 \uC911")
             self.update_total_progress_display()
             self._refresh_file_list_empty_state()
-            if not files and show_empty_message:
-                self.show_info_message("알림", "선택한 폴더에서 MP3 파일을 찾지 못했습니다.")
         except Exception as e:
             self.show_error_message("오류", f"파일 목록을 불러오지 못했습니다.\n\n{e}")
 
     def move_selected_files_core(self, refresh_queue: bool = True):
-        if not self.download_folder:
-            self.show_warning_message("경고", "먼저 다운로드 폴더를 선택해 주세요.")
-            return None
         if not self.target_folder:
             self.show_warning_message("경고", "먼저 전사자료 폴더를 선택해 주세요.")
             return None
-        selected_names = self._get_checked_queue_files()
-        if not selected_names:
+        selected_rows = self._get_checked_queue_rows()
+        if not selected_rows:
             self.show_warning_message("경고", "이동할 MP3 파일을 체크해 주세요.")
             return None
         moved, skipped, failed = 0, 0, []
         selected_items: list[dict] = []
         selected_target_files: list[str] = []
         seen_targets = set()
-        same_folder = self._is_same_folder(self.download_folder, self.target_folder)
-        for original in selected_names:
-            clean = remove_page_suffix(original)
-            src = os.path.join(self.download_folder, original)
+        same_folder = False
+        for row in selected_rows:
+            original = os.path.basename(str(row.get("filename", ""))).strip()
+            src = self._normalize_saved_folder_path(row.get("source_path", ""))
+            if not src:
+                failed.append(f"{original} -> 원본 파일 경로가 없습니다.")
+                continue
+            if not os.path.isfile(src):
+                failed.append(f"{original} -> 원본 파일이 존재하지 않습니다.")
+                continue
+            clean = remove_page_suffix(os.path.basename(src))
             dst = os.path.join(self.target_folder, clean)
-            target_for_transcribe = os.path.basename(src if same_folder else dst)
-            row = self._find_queue_row_by_filename(original)
-            if row is not None:
-                row["transcribe_name"] = target_for_transcribe
+            same_src_target = self._is_same_folder(os.path.dirname(src), self.target_folder)
+            same_folder = same_folder or same_src_target
+            target_for_transcribe = os.path.basename(src if same_src_target else dst)
+            row["transcribe_name"] = target_for_transcribe
             try:
-                if same_folder:
+                if same_src_target:
                     skipped += 1
                 elif os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
                     skipped += 1
@@ -3393,6 +3352,7 @@ class TranscribeGUI(QWidget):
                 else:
                     shutil.move(src, dst)
                     moved += 1
+                    row["source_path"] = dst
                 target_key = target_for_transcribe.strip().lower()
                 if target_key and target_key not in seen_targets:
                     seen_targets.add(target_key)
@@ -3404,13 +3364,9 @@ class TranscribeGUI(QWidget):
                     }
                 )
             except Exception as e:
-                if row is not None:
-                    row["transcribe_name"] = row.get("filename", original)
+                row["transcribe_name"] = row.get("filename", original)
                 failed.append(f"{original} -> {e}")
-        if refresh_queue:
-            self.load_mp3_files(show_empty_message=False)
-        else:
-            self._refresh_file_queue_table()
+        self._refresh_file_queue_table()
         return {
             "moved_count": moved,
             "skipped_count": skipped,
