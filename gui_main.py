@@ -3386,24 +3386,23 @@ class TranscribeGUI(QWidget):
         self.run_transcribe_process()
 
     def start_transcribe_on_target_folder(self):
-        self.append_log_text(f"[DBG] start_transcribe_on_target_folder: target_folder={self.target_folder!r}, file_queue_rows={len(self.file_queue_rows)}개\n", force=True)
-        for _r in self.file_queue_rows:
-            self.append_log_text(f"[DBG]   row: filename={_r.get('filename')!r}, source_path={_r.get('source_path')!r}\n", force=True)
+        # 대기열이 비어있으면 즉시 경고
+        if not self.file_queue_rows:
+            self.show_warning_message("경고", "전사할 파일이 없습니다.\n\n먼저 MP3 파일을 불러오세요.")
+            return
         if not self.target_folder:
             self.show_warning_message("경고", "먼저 전사자료 폴더를 선택해 주세요.")
             return
 
+        # 대기열 파일 중 target_folder 외부에 있는 파일을 자동 이동
         external_moved = 0
         for row in self.file_queue_rows:
             src = self._normalize_saved_folder_path(row.get("source_path", ""))
             if not src or not os.path.isfile(src):
-                self.append_log_text(f"[DBG]   외부이동 건너뜀: src={src!r}\n", force=True)
                 continue
-            
             if not self._is_same_folder(os.path.dirname(src), self.target_folder):
                 clean = remove_page_suffix(os.path.basename(src))
                 dst = os.path.join(self.target_folder, clean)
-                self.append_log_text(f"[DBG]   외부이동: {src!r} → {dst!r}\n", force=True)
                 try:
                     if not os.path.exists(dst):
                         shutil.move(src, dst)
@@ -3411,16 +3410,30 @@ class TranscribeGUI(QWidget):
                     row["source_path"] = dst
                     row["transcribe_name"] = clean
                 except Exception as e:
-                    self.append_log_text(f"[WARN] 외부 파일 자동 이동 실패: {src} -> {e}\n")
+                    self.append_log_text(f"[WARN] 외부 파일 자동 이동 실패: {src} -> {e}\n", force=True)
 
         if external_moved > 0:
-            self.append_log_text(f"[GUI] 외부 MP3 {external_moved}개를 전사자료 폴더로 이동했습니다.\n")
             self._refresh_file_queue_table()
 
-        self.selected_run_items = []
+        # 대기열 전체(체크 여부 무관)를 selected_run_items로 등록 → 임시 폴더 전사
+        all_items = []
+        for row in self.file_queue_rows:
+            transcribe_name = str(row.get("transcribe_name", row.get("filename", ""))).strip()
+            if not transcribe_name:
+                continue
+            all_items.append({
+                "queue_name": str(row.get("filename", "")),
+                "transcribe_name": transcribe_name,
+                "source_path": str(row.get("source_path", "")),
+            })
+
+        if not all_items:
+            self.show_warning_message("경고", "전사할 파일이 없습니다.")
+            return
+
+        self.selected_run_items = all_items
         self._cleanup_selected_runtime_folder()
         self.run_mode = "all"
-        self.append_log_text("[GUI] run_mode=all 설정\n")
         self.run_transcribe_process()
 
     def _output_triplet(self, mp3_path: str):
@@ -3818,7 +3831,7 @@ class TranscribeGUI(QWidget):
             self.show_warning_message("경고", "이미 전사 작업이 진행 중입니다.")
             return
         runtime_folder = self.target_folder
-        if self.run_mode == "selected":
+        if self.run_mode in ("selected", "all") and self.selected_run_items:
             if not self._prepare_selected_runtime_folder():
                 return
             runtime_folder = self.selected_runtime_folder or self.target_folder
@@ -3844,9 +3857,8 @@ class TranscribeGUI(QWidget):
                 timeout_ms=7600,
                 allow_open_folder=True,
             )
-            if self.run_mode == "selected":
-                self._sync_selected_runtime_outputs()
-                self.selected_run_items = []
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
             return
         self.prepare_progress_tracking(runtime_folder=runtime_folder)
         self.set_transcribe_buttons_enabled(False)
@@ -3862,9 +3874,8 @@ class TranscribeGUI(QWidget):
         if not self.process.waitForStarted(4000):
             self.process = None
             self.set_transcribe_buttons_enabled(True)
-            if self.run_mode == "selected":
-                self._sync_selected_runtime_outputs()
-                self.selected_run_items = []
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
             self.show_error_message("오류", "전사 프로세스를 시작하지 못했습니다.")
             return
         _start_status = "선택 전사 진행 중" if self.run_mode == "selected" else "전체 전사 진행 중"
@@ -3891,8 +3902,7 @@ class TranscribeGUI(QWidget):
         self.append_log_text(f"[GUI] 프로세스 종료: exit_code={exit_code}, normal={normal_exit}\n")
         self.process = None
         self._sync_selected_runtime_outputs()
-        if self.run_mode == "selected":
-            self.selected_run_items = []
+        self.selected_run_items = []
         self.set_transcribe_buttons_enabled(True)
         self.update_session_label()
         if self.stop_requested:
@@ -3946,6 +3956,7 @@ class TranscribeGUI(QWidget):
             self.pending_kill = False
             self.stop_terminate_sent = False
             self._set_status_text("\uD604\uC7AC \uC0C1\uD0DC: \uC911\uC9C0 \uC694\uCCAD\uB428")
+            self._append_user_log("전사 중지됨")
             self.append_log_text("[INFO] 사용자 즉시 중지 요청 감지\n")
             self.append_log_text("[GUI] stop.flag 생성 완료 - 즉시 중지 요청\n")
             if self.process is not None and self.process.state() != QProcess.NotRunning:
