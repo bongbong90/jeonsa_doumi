@@ -846,7 +846,11 @@ class TranscribeGUI(QWidget):
         self.pending_kill = False
         self.stop_terminate_sent = False
         self.shutdown_prompt_shown_for_run = False
+        self.shutdown_prompt_pending_for_run = False
         self.toast_window: TrayToastWindow | None = None
+        self.selected_runtime_folder = ""
+        self.selected_runtime_entries: list[dict] = []
+        self.selected_run_items: list[dict] = []
         self.ui_settings = QSettings(get_ui_settings_path(), QSettings.IniFormat)
         self._status_full_text = "\uB300\uAE30 \uC911"
         self._current_file_full_text = "\uD604\uC7AC \uCC98\uB9AC \uC911 \uD30C\uC77C: \uC5C6\uC74C"
@@ -1914,7 +1918,7 @@ class TranscribeGUI(QWidget):
 
         for row_idx, row_data in enumerate(self.file_queue_rows):
             is_checked = row_data.get("checked", False)
-            row_bg = "#eff6ff" if is_checked else "#ffffff"
+            row_bg = self._row_bg(row_data)
 
             # 컬럼 0: 체크박스 셀 위젯 (커스텀 스타일 적용)
             cb = QCheckBox()
@@ -1979,12 +1983,17 @@ class TranscribeGUI(QWidget):
         self._refresh_file_list_empty_state()
         self._update_checked_state()
 
+    def _row_bg(self, row_data: dict) -> str:
+        if row_data.get("status") == QUEUE_STATUS_DONE:
+            return "#f0fdf4"
+        return "#eff6ff" if row_data.get("checked", False) else "#ffffff"
+
     def _on_cell_checkbox_changed(self, row_idx: int, state: int):
         if row_idx < 0 or row_idx >= len(self.file_queue_rows):
             return
         is_checked = bool(state)
         self.file_queue_rows[row_idx]["checked"] = is_checked
-        row_bg = "#eff6ff" if is_checked else "#ffffff"
+        row_bg = self._row_bg(self.file_queue_rows[row_idx])
         for col in (1, 2):
             item = self.file_queue_table.item(row_idx, col)
             if item:
@@ -2019,8 +2028,8 @@ class TranscribeGUI(QWidget):
         self.update_total_progress_display()
 
     def _set_queue_status_by_name(self, file_name: str, status: str):
-        target = os.path.basename(file_name or "").strip().lower()
-        if not target:
+        target_keys = self._queue_name_keys(file_name)
+        if not target_keys:
             return
         if status == QUEUE_STATUS_PROCESSING:
             for row in self.file_queue_rows:
@@ -2028,13 +2037,33 @@ class TranscribeGUI(QWidget):
                     row["status"] = QUEUE_STATUS_WAITING
         updated = False
         for row in self.file_queue_rows:
-            current = os.path.basename(str(row.get("filename", ""))).strip().lower()
-            if current == target:
+            row_keys = set()
+            row_keys.update(self._queue_name_keys(str(row.get("filename", ""))))
+            row_keys.update(self._queue_name_keys(str(row.get("transcribe_name", ""))))
+            if row_keys & target_keys:
                 row["status"] = status
                 updated = True
                 break
         if updated:
             self._refresh_file_queue_table()
+
+    def _queue_name_keys(self, file_name: str) -> set[str]:
+        base = os.path.basename(str(file_name or "")).strip()
+        if not base:
+            return set()
+        keys = {base.lower()}
+        keys.add(os.path.basename(remove_page_suffix(base)).strip().lower())
+        return {k for k in keys if k}
+
+    def _find_queue_row_by_filename(self, file_name: str):
+        target = os.path.basename(str(file_name or "")).strip().lower()
+        if not target:
+            return None
+        for row in self.file_queue_rows:
+            current = os.path.basename(str(row.get("filename", ""))).strip().lower()
+            if current == target:
+                return row
+        return None
 
     def _mark_all_queue_checked(self):
         for row in self.file_queue_rows:
@@ -2077,6 +2106,7 @@ class TranscribeGUI(QWidget):
             self.file_queue_rows.append(
                 {
                     "filename": name,
+                    "transcribe_name": name,
                     "duration": duration,
                     "status": QUEUE_STATUS_WAITING,
                     "checked": False,
@@ -2635,6 +2665,134 @@ class TranscribeGUI(QWidget):
             except Exception as e:
                 self.append_log_text(f"[GUI] stop.flag 제거 실패: {e}\n")
 
+    def _is_same_folder(self, left: str, right: str) -> bool:
+        if not left or not right:
+            return False
+        try:
+            return os.path.normcase(os.path.abspath(left)) == os.path.normcase(os.path.abspath(right))
+        except Exception:
+            return False
+
+    def _link_or_copy_file(self, src: str, dst: str):
+        parent = os.path.dirname(dst)
+        if parent:
+            os.makedirs(parent, exist_ok=True)
+        try:
+            os.link(src, dst)
+            return
+        except Exception:
+            shutil.copy2(src, dst)
+
+    def _cleanup_selected_runtime_folder(self):
+        runtime = self.selected_runtime_folder
+        self.selected_runtime_folder = ""
+        self.selected_runtime_entries = []
+        if not runtime:
+            return
+        try:
+            shutil.rmtree(runtime, ignore_errors=True)
+        except Exception as e:
+            self.append_log_text(f"[GUI] 선택 전사용 임시 폴더 정리 실패: {e}\n")
+
+    def _prepare_selected_runtime_folder(self) -> bool:
+        self._cleanup_selected_runtime_folder()
+        if not self.selected_run_items:
+            self.show_warning_message("경고", "선택 전사 대상 파일이 없습니다.")
+            return False
+        runtime_parent = os.path.dirname(self.target_folder)
+        runtime_folder = ""
+        try:
+            stamp = int(time.time() * 1000)
+            for seq in range(100):
+                candidate = os.path.join(runtime_parent, f"selected_transcribe_{stamp}_{seq}")
+                if os.path.exists(candidate):
+                    continue
+                os.makedirs(candidate, exist_ok=False)
+                runtime_folder = candidate
+                break
+        except Exception as e:
+            self.show_error_message("오류", f"선택 전사 임시 폴더를 만들지 못했습니다.\n\n{e}")
+            return False
+        if not runtime_folder:
+            self.show_error_message("오류", "선택 전사 임시 폴더 이름을 확보하지 못했습니다.")
+            return False
+
+        runtime_entries: list[dict] = []
+        for item in self.selected_run_items:
+            transcribe_name = os.path.basename(str(item.get("transcribe_name", ""))).strip()
+            if not transcribe_name:
+                continue
+            target_mp3 = os.path.join(self.target_folder, transcribe_name)
+            if not os.path.isfile(target_mp3):
+                self.append_log_text(f"[WARN] 선택 전사 대상 파일 누락: {target_mp3}\n")
+                continue
+            runtime_mp3 = os.path.join(runtime_folder, os.path.basename(target_mp3))
+            try:
+                self._link_or_copy_file(target_mp3, runtime_mp3)
+            except Exception as e:
+                self.append_log_text(f"[WARN] 선택 전사 임시 파일 준비 실패: {target_mp3} / {e}\n")
+                continue
+
+            target_outputs = self._output_triplet(target_mp3)
+            runtime_outputs = self._output_triplet(runtime_mp3)
+            for src_out, dst_out in zip(target_outputs, runtime_outputs):
+                if not os.path.exists(src_out):
+                    continue
+                try:
+                    shutil.copy2(src_out, dst_out)
+                except Exception as e:
+                    self.append_log_text(f"[WARN] 기존 결과 복사 실패: {src_out} -> {dst_out} ({e})\n")
+
+            runtime_entries.append(
+                {
+                    "queue_name": item.get("queue_name", ""),
+                    "target_mp3": target_mp3,
+                    "runtime_mp3": runtime_mp3,
+                }
+            )
+
+        if not runtime_entries:
+            self._cleanup_selected_runtime_folder()
+            self.show_warning_message("경고", "선택한 MP3를 전사 대상으로 준비하지 못했습니다.")
+            return False
+
+        self.selected_runtime_folder = runtime_folder
+        self.selected_runtime_entries = runtime_entries
+        return True
+
+    def _sync_selected_runtime_outputs(self):
+        if not self.selected_runtime_entries:
+            self._cleanup_selected_runtime_folder()
+            return
+        for entry in self.selected_runtime_entries:
+            runtime_mp3 = str(entry.get("runtime_mp3", ""))
+            target_mp3 = str(entry.get("target_mp3", ""))
+            if not runtime_mp3 or not target_mp3:
+                continue
+            runtime_outputs = self._output_triplet(runtime_mp3)
+            target_outputs = self._output_triplet(target_mp3)
+            for src_out, dst_out in zip(runtime_outputs, target_outputs):
+                if not os.path.exists(src_out):
+                    continue
+                try:
+                    shutil.copy2(src_out, dst_out)
+                except Exception as e:
+                    self.append_log_text(f"[WARN] 선택 전사 결과 동기화 실패: {src_out} -> {dst_out} ({e})\n")
+        self._cleanup_selected_runtime_folder()
+
+    def _queue_shutdown_prompt_after_completion(self, reason: str):
+        if not self.shutdown_checkbox.isChecked():
+            return
+        if self.shutdown_prompt_shown_for_run or self.shutdown_prompt_pending_for_run:
+            return
+        self.shutdown_prompt_pending_for_run = True
+        self.append_log_text(f"[GUI] 종료 확인 팝업 예약 ({reason})\n")
+        QTimer.singleShot(120, self._consume_shutdown_prompt_queue)
+
+    def _consume_shutdown_prompt_queue(self):
+        self.shutdown_prompt_pending_for_run = False
+        self.request_shutdown_after_completion()
+
     def setup_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
         icon = load_runtime_icon()
@@ -2909,6 +3067,7 @@ class TranscribeGUI(QWidget):
         return result == 1
 
     def request_shutdown_after_completion(self):
+        self.shutdown_prompt_pending_for_run = False
         self.append_log_text(f"[GUI] 종료 옵션={self.shutdown_checkbox.isChecked()}, run_mode={self.run_mode}\n")
         if not self.shutdown_checkbox.isChecked():
             return
@@ -3097,7 +3256,7 @@ class TranscribeGUI(QWidget):
         except Exception as e:
             self.show_error_message("오류", f"파일 목록을 불러오지 못했습니다.\n\n{e}")
 
-    def move_selected_files_core(self):
+    def move_selected_files_core(self, refresh_queue: bool = True):
         if not self.download_folder:
             self.show_warning_message("경고", "먼저 다운로드 폴더를 선택해 주세요.")
             return None
@@ -3109,20 +3268,54 @@ class TranscribeGUI(QWidget):
             self.show_warning_message("경고", "이동할 MP3 파일을 체크해 주세요.")
             return None
         moved, skipped, failed = 0, 0, []
+        selected_items: list[dict] = []
+        selected_target_files: list[str] = []
+        seen_targets = set()
+        same_folder = self._is_same_folder(self.download_folder, self.target_folder)
         for original in selected_names:
             clean = remove_page_suffix(original)
             src = os.path.join(self.download_folder, original)
             dst = os.path.join(self.target_folder, clean)
+            target_for_transcribe = os.path.basename(src if same_folder else dst)
+            row = self._find_queue_row_by_filename(original)
+            if row is not None:
+                row["transcribe_name"] = target_for_transcribe
             try:
-                if os.path.exists(dst):
+                if same_folder:
                     skipped += 1
-                    continue
-                shutil.move(src, dst)
-                moved += 1
+                elif os.path.normcase(os.path.abspath(src)) == os.path.normcase(os.path.abspath(dst)):
+                    skipped += 1
+                elif os.path.exists(dst):
+                    skipped += 1
+                else:
+                    shutil.move(src, dst)
+                    moved += 1
+                target_key = target_for_transcribe.strip().lower()
+                if target_key and target_key not in seen_targets:
+                    seen_targets.add(target_key)
+                    selected_target_files.append(target_for_transcribe)
+                selected_items.append(
+                    {
+                        "queue_name": original,
+                        "transcribe_name": target_for_transcribe,
+                    }
+                )
             except Exception as e:
+                if row is not None:
+                    row["transcribe_name"] = row.get("filename", original)
                 failed.append(f"{original} -> {e}")
-        self.load_mp3_files(show_empty_message=False)
-        return {"moved_count": moved, "skipped_count": skipped, "failed_files": failed}
+        if refresh_queue:
+            self.load_mp3_files(show_empty_message=False)
+        else:
+            self._refresh_file_queue_table()
+        return {
+            "moved_count": moved,
+            "skipped_count": skipped,
+            "failed_files": failed,
+            "selected_items": selected_items,
+            "selected_target_files": selected_target_files,
+            "same_folder": same_folder,
+        }
 
     def move_selected_files(self):
         result = self.move_selected_files_core()
@@ -3139,16 +3332,19 @@ class TranscribeGUI(QWidget):
         self.show_info_message("\uC774\uB3D9 \uACB0\uACFC", msg)
 
     def move_selected_files_and_start_transcribe(self):
-        result = self.move_selected_files_core()
+        result = self.move_selected_files_core(refresh_queue=False)
         if result is None:
             return
-        if result["moved_count"] <= 0:
-            self.show_info_message("알림", "이동된 파일이 없어 전사를 시작하지 않습니다.")
+        if not result["selected_items"]:
+            self.show_info_message("알림", "선택한 MP3가 없어 전사를 시작하지 않습니다.")
             return
+        self.selected_run_items = result["selected_items"]
         self.run_mode = "selected"
         self.run_transcribe_process()
 
     def start_transcribe_on_target_folder(self):
+        self.selected_run_items = []
+        self._cleanup_selected_runtime_folder()
         self.run_mode = "all"
         self.append_log_text("[GUI] run_mode=all 설정\n")
         self.run_transcribe_process()
@@ -3180,30 +3376,34 @@ class TranscribeGUI(QWidget):
             return False
         return True
 
-    def count_target_mp3_files(self) -> int:
-        if not self.target_folder or not os.path.isdir(self.target_folder):
+    def count_pending_mp3_files(self, folder: str) -> int:
+        if not folder or not os.path.isdir(folder):
             return 0
         count = 0
-        for name in os.listdir(self.target_folder):
+        for name in os.listdir(folder):
             if not name.lower().endswith(".mp3"):
                 continue
-            mp3_path = os.path.join(self.target_folder, name)
+            mp3_path = os.path.join(folder, name)
             if not self._output_triplet_looks_complete(mp3_path):
                 count += 1
         return count
 
-    def prepare_progress_tracking(self):
+    def count_target_mp3_files(self) -> int:
+        return self.count_pending_mp3_files(self.target_folder)
+
+    def prepare_progress_tracking(self, runtime_folder: str | None = None):
         self.stdout_buffer = ""
         self.stderr_buffer = ""
         self.notified_success_files.clear()
         self.total_complete_notified = False
         self.completed_files.clear()
         self.last_completed_file_name = ""
-        self.total_target_mp3_files = self.count_target_mp3_files()
+        self.total_target_mp3_files = self.count_pending_mp3_files(runtime_folder or self.target_folder)
         self.stop_requested = False
         self.pending_kill = False
         self.stop_terminate_sent = False
         self.shutdown_prompt_shown_for_run = False
+        self.shutdown_prompt_pending_for_run = False
         self.last_current_percent = 0
         self.current_file_name = ""
         self.current_file_started_at = None
@@ -3493,8 +3693,7 @@ class TranscribeGUI(QWidget):
                 )
                 self.total_complete_notified = True
             
-            if not _is_selected:
-                QTimer.singleShot(0, self.request_shutdown_after_completion)
+            self._queue_shutdown_prompt_after_completion("ALL_DONE")
         elif evt == "PREVIOUS_SESSION_CRASHED":
             self.append_log_text("[GUI] 이전 작업 비정상 종료 이력이 감지되었습니다.\n")
             self.update_session_label()
@@ -3517,7 +3716,16 @@ class TranscribeGUI(QWidget):
         if self.process is not None:
             self.show_warning_message("경고", "이미 전사 작업이 진행 중입니다.")
             return
-        if self.count_target_mp3_files() <= 0:
+        runtime_folder = self.target_folder
+        if self.run_mode == "selected":
+            if not self._prepare_selected_runtime_folder():
+                return
+            runtime_folder = self.selected_runtime_folder or self.target_folder
+        else:
+            self.selected_run_items = []
+            self._cleanup_selected_runtime_folder()
+
+        if self.count_pending_mp3_files(runtime_folder) <= 0:
             self.total_target_mp3_files = 0
             self.update_total_progress_display()
             self._set_status_text("처리할 파일 없음")
@@ -3533,13 +3741,16 @@ class TranscribeGUI(QWidget):
                 timeout_ms=7600,
                 allow_open_folder=True,
             )
+            if self.run_mode == "selected":
+                self._sync_selected_runtime_outputs()
+                self.selected_run_items = []
             return
-        self.prepare_progress_tracking()
+        self.prepare_progress_tracking(runtime_folder=runtime_folder)
         self.set_transcribe_buttons_enabled(False)
         self.update_session_label()
         self.process = QProcess(self)
         self.process.setProgram("python" if getattr(sys, "frozen", False) else sys.executable)
-        self.process.setArguments([auto_path, self.target_folder])
+        self.process.setArguments([auto_path, runtime_folder])
         self.process.setWorkingDirectory(self.get_base_dir())
         self.process.readyReadStandardOutput.connect(self.handle_process_stdout)
         self.process.readyReadStandardError.connect(self.handle_process_stderr)
@@ -3548,6 +3759,9 @@ class TranscribeGUI(QWidget):
         if not self.process.waitForStarted(4000):
             self.process = None
             self.set_transcribe_buttons_enabled(True)
+            if self.run_mode == "selected":
+                self._sync_selected_runtime_outputs()
+                self.selected_run_items = []
             self.show_error_message("오류", "전사 프로세스를 시작하지 못했습니다.")
             return
         _start_status = "선택 전사 진행 중" if self.run_mode == "selected" else "전체 전사 진행 중"
@@ -3573,6 +3787,9 @@ class TranscribeGUI(QWidget):
         normal_exit = exit_status == QProcess.NormalExit
         self.append_log_text(f"[GUI] 프로세스 종료: exit_code={exit_code}, normal={normal_exit}\n")
         self.process = None
+        self._sync_selected_runtime_outputs()
+        if self.run_mode == "selected":
+            self.selected_run_items = []
         self.set_transcribe_buttons_enabled(True)
         self.update_session_label()
         if self.stop_requested:
@@ -3602,15 +3819,14 @@ class TranscribeGUI(QWidget):
         if exit_code != 0 and exit_status == QProcess.NormalExit:
             self._set_status_text("오류 발생")
         self.stop_terminate_sent = False
-        # 폴백: ALL_DONE 이벤트가 누락된 경우를 대비해 전체 전사 완료 시 종료 옵션 확인
+        # 폴백: ALL_DONE 이벤트가 누락된 경우를 대비해 전사 완료 시 종료 옵션 확인
         if (
             exit_code == 0
             and exit_status == QProcess.NormalExit
-            and self.run_mode == "all"
             and not self.shutdown_prompt_shown_for_run
         ):
             self.append_log_text(f"[GUI] handle_process_finished 폴백: 종료 옵션 확인 (run_mode={self.run_mode})\n")
-            QTimer.singleShot(0, self.request_shutdown_after_completion)
+            self._queue_shutdown_prompt_after_completion("handle_process_finished_fallback")
 
     def request_immediate_stop(self):
         if self.process is None or self.process.state() == QProcess.NotRunning:
