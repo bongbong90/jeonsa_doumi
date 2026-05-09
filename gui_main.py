@@ -1281,11 +1281,16 @@ class TranscribeGUI(QWidget):
         self.btn_uncheck_all.setObjectName("QueueHeaderButton")
         self.btn_uncheck_all.setFixedHeight(28)
         self.btn_uncheck_all.setEnabled(False)
+        self.btn_clear_all = QPushButton("전체 삭제")
+        self.btn_clear_all.setObjectName("QueueHeaderButtonDanger")
+        self.btn_clear_all.setFixedHeight(28)
+        self.btn_clear_all.setEnabled(False)
         self.btn_clear_done = QPushButton("Clear Done")
         self.btn_clear_done.setObjectName("QueueHeaderButton")
         self.btn_clear_done.setFixedHeight(28)
         header_row.addWidget(self.btn_filter_all, 0)
         header_row.addWidget(self.btn_uncheck_all, 0)
+        header_row.addWidget(self.btn_clear_all, 0)
         header_row.addWidget(self.btn_clear_done, 0)
         fbox.addLayout(header_row)
 
@@ -1409,6 +1414,7 @@ class TranscribeGUI(QWidget):
         self.btn_stop_now.clicked.connect(self.request_immediate_stop)
         self.btn_filter_all.clicked.connect(self._mark_all_queue_checked)
         self.btn_uncheck_all.clicked.connect(self._uncheck_all_queue)
+        self.btn_clear_all.clicked.connect(self._clear_all_queue_rows)
         self.btn_clear_done.clicked.connect(self._clear_done_queue_rows)
         self.chk_notify_each_file.stateChanged.connect(self.save_ui_preferences)
         self.chk_notify_total.stateChanged.connect(self.save_ui_preferences)
@@ -1637,6 +1643,21 @@ class TranscribeGUI(QWidget):
             }
             QPushButton#QueueHeaderButton:hover {
                 background: #f8fafc;
+            }
+            QPushButton#QueueHeaderButtonDanger {
+                border: 1px solid #e2e8f0;
+                border-radius: 2px;
+                background: #ffffff;
+                color: #ba1a1a;
+                font-size: 12px;
+                padding: 2px 10px;
+            }
+            QPushButton#QueueHeaderButtonDanger:hover {
+                background: #fff0f0;
+            }
+            QPushButton#QueueHeaderButtonDanger:disabled {
+                color: #e2b4b4;
+                border-color: #f1f5f9;
             }
             QPushButton#QueueRemoveButton {
                 border: 1px solid #e2e8f0;
@@ -2022,6 +2043,7 @@ class TranscribeGUI(QWidget):
             self.label_file_count.setText(f"불러온 MP3 파일 수: {total}개")
         self.btn_filter_all.setEnabled(has_files)
         self.btn_uncheck_all.setEnabled(has_files)
+        self.btn_clear_all.setEnabled(has_files and not self._is_transcribe_running())
         if not self._is_transcribe_running():
             self.btn_move_and_transcribe.setEnabled(checked_count > 0)
 
@@ -2089,6 +2111,13 @@ class TranscribeGUI(QWidget):
         self.file_queue_rows = [row for row in self.file_queue_rows if row.get("status") != QUEUE_STATUS_DONE]
         self.loaded_mp3_count = len(self.file_queue_rows)
         self.label_file_count.setText(f"불러온 MP3 파일 수: {self.loaded_mp3_count}개")
+        self._refresh_file_queue_table()
+        self.update_total_progress_display()
+
+    def _clear_all_queue_rows(self):
+        self.file_queue_rows = []
+        self.loaded_mp3_count = 0
+        self.label_file_count.setText("불러온 MP3 파일 수: 0개")
         self._refresh_file_queue_table()
         self.update_total_progress_display()
 
@@ -3186,6 +3215,7 @@ class TranscribeGUI(QWidget):
         self.btn_move_and_transcribe.setEnabled(enabled)
         self.btn_transcribe_target.setEnabled(enabled)
         self.btn_stop_now.setEnabled(not enabled)
+        self.btn_clear_all.setEnabled(enabled and bool(self.file_queue_rows))
         self._refresh_path_labels()
 
     def translate_session_status(self, status: str) -> str:
