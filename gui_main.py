@@ -1,4 +1,4 @@
-﻿
+
 
 
 
@@ -489,6 +489,10 @@ QUEUE_STATUS_DONE = "DONE"
 QUEUE_STATUS_FAILED = "FAILED"
 QUEUE_STATUS_MOVED = "MOVED"
 QUEUE_STATUS_STOP = "STOP"
+
+FOLDER_STATUS_COMPLETE = "완료"
+FOLDER_STATUS_INCOMPLETE = "미완료"
+FOLDER_STATUS_RESULT_ONLY = "결과만"
 
 
 
@@ -5182,6 +5186,11 @@ class TranscribeGUI(QWidget):
         self.dashboard_recent_done_items: list[dict] = []
         self.dashboard_observed_audio_seconds = 0.0
         self.dashboard_observed_processing_seconds = 0.0
+        self.folder_tab_rows: list[dict] = []
+        self.folder_tab_visible_rows: list[dict] = []
+        self.folder_tab_filter_mode = "all"
+        self.folder_preview_full_text = ""
+        self.folder_preview_path = ""
 
 
 
@@ -5282,6 +5291,8 @@ class TranscribeGUI(QWidget):
         self.load_ui_preferences()
         self.load_dashboard_statistics()
         self.refresh_dashboard_view()
+        self._set_folder_filter_mode("all")
+        self.refresh_folder_management_view()
 
 
 
@@ -8451,58 +8462,123 @@ class TranscribeGUI(QWidget):
 
 
         folder_page = QWidget()
-
-
-
-
-
         folder_layout = QVBoxLayout(folder_page)
-
-
-
-
-
         folder_layout.setContentsMargins(0, 0, 0, 0)
+        folder_layout.setSpacing(10)
 
+        folder_top_card = QFrame()
+        folder_top_card.setObjectName("DashboardCard")
+        folder_top_box = QVBoxLayout(folder_top_card)
+        folder_top_box.setContentsMargins(14, 12, 14, 12)
+        folder_top_box.setSpacing(8)
+        folder_top_box.addWidget(QLabel("CURRENT FOLDER", objectName="DashboardMicroLabel"))
 
+        folder_path_row = QHBoxLayout()
+        folder_path_row.setContentsMargins(0, 0, 0, 0)
+        folder_path_row.setSpacing(8)
+        self.label_folders_current_path = QLabel("미설정")
+        self.label_folders_current_path.setObjectName("PathLabel")
+        self.label_folders_current_path.setMinimumHeight(34)
+        self.label_folders_current_path.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        folder_path_row.addWidget(self.label_folders_current_path, 1)
 
+        self.btn_folders_open = QPushButton("폴더 열기")
+        self.btn_folders_open.setProperty("uiRole", "controlOutline")
+        self.btn_folders_open.setFixedHeight(34)
+        folder_path_row.addWidget(self.btn_folders_open, 0)
 
+        self.btn_folders_refresh = QPushButton("새로고침")
+        self.btn_folders_refresh.setProperty("uiRole", "controlOutline")
+        self.btn_folders_refresh.setFixedHeight(34)
+        folder_path_row.addWidget(self.btn_folders_refresh, 0)
 
-        folder_placeholder = QFrame()
+        folder_top_box.addLayout(folder_path_row)
+        folder_layout.addWidget(folder_top_card, 0)
 
+        folder_table_card = QFrame()
+        folder_table_card.setObjectName("DashboardCard")
+        folder_table_box = QVBoxLayout(folder_table_card)
+        folder_table_box.setContentsMargins(14, 12, 14, 12)
+        folder_table_box.setSpacing(8)
 
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.setSpacing(8)
 
+        self.btn_folders_filter_all = QPushButton("전체")
+        self.btn_folders_filter_done = QPushButton("완료")
+        self.btn_folders_filter_pending = QPushButton("미완료")
+        self.btn_folders_filter_result_only = QPushButton("결과만")
+        for _btn in (
+            self.btn_folders_filter_all,
+            self.btn_folders_filter_done,
+            self.btn_folders_filter_pending,
+            self.btn_folders_filter_result_only,
+        ):
+            _btn.setProperty("uiRole", "controlOutline")
+            _btn.setFixedHeight(34)
+            _btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+            _btn.setMinimumWidth(_btn.fontMetrics().horizontalAdvance(_btn.text()) + 26)
+            filter_row.addWidget(_btn, 0)
+        filter_row.addStretch(1)
+        folder_table_box.addLayout(filter_row)
 
+        self.folders_table = QTableWidget(0, 4)
+        self.folders_table.setObjectName("FolderFilesTable")
+        self.folders_table.setHorizontalHeaderLabels(["파일명", "유형", "전사 상태", "수정일"])
+        self.folders_table.verticalHeader().setVisible(False)
+        self.folders_table.horizontalHeader().setStretchLastSection(False)
+        self.folders_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.folders_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.folders_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
+        self.folders_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Fixed)
+        self.folders_table.setColumnWidth(1, 90)
+        self.folders_table.setColumnWidth(2, 100)
+        self.folders_table.setColumnWidth(3, 160)
+        self.folders_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.folders_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.folders_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.folders_table.setAlternatingRowColors(False)
+        self.folders_table.setShowGrid(False)
+        self.folders_table.setWordWrap(False)
+        self.folders_table.setTextElideMode(Qt.ElideRight)
+        self.folders_table.setFocusPolicy(Qt.NoFocus)
+        self.folders_table.setSortingEnabled(False)
+        folders_header = self.folders_table.horizontalHeader()
+        folders_header.setSortIndicatorShown(True)
+        folders_header.setSectionsClickable(True)
+        folders_header.setSortIndicator(0, Qt.AscendingOrder)
+        folder_table_box.addWidget(self.folders_table, 1)
 
-        folder_placeholder.setObjectName("PlaceholderCard")
+        folder_layout.addWidget(folder_table_card, 1)
 
+        folder_preview_card = QFrame()
+        folder_preview_card.setObjectName("DashboardCard")
+        folder_preview_box = QVBoxLayout(folder_preview_card)
+        folder_preview_box.setContentsMargins(14, 12, 14, 12)
+        folder_preview_box.setSpacing(8)
 
+        preview_header = QHBoxLayout()
+        preview_header.setContentsMargins(0, 0, 0, 0)
+        preview_header.setSpacing(8)
+        preview_header.addWidget(QLabel("TXT PREVIEW", objectName="DashboardMicroLabel"), 1)
+        preview_header.addStretch(1)
 
+        self.btn_folders_preview_full = QPushButton("전체 보기")
+        preview_btn_width = max(96, self.btn_folders_preview_full.fontMetrics().horizontalAdvance("전체 보기") + 32)
+        self.btn_folders_preview_full.setFixedWidth(preview_btn_width)
+        self.btn_folders_preview_full.setFixedHeight(34)
+        preview_header.addWidget(self.btn_folders_preview_full, 0)
+        folder_preview_box.addLayout(preview_header)
 
+        self.text_folders_preview = QTextEdit()
+        self.text_folders_preview.setObjectName("FolderPreviewText")
+        self.text_folders_preview.setReadOnly(True)
+        self.text_folders_preview.setPlaceholderText("TXT 파일을 선택하면 미리보기가 표시됩니다.")
+        self.text_folders_preview.setMinimumHeight(150)
+        folder_preview_box.addWidget(self.text_folders_preview, 1)
 
-        folder_box = QVBoxLayout(folder_placeholder)
-
-
-
-
-
-        folder_box.setContentsMargins(20, 20, 20, 20)
-
-
-
-
-
-        folder_box.addWidget(QLabel("Folders 탭은 폴더 관리 전용 영역입니다.", objectName="PlaceholderText"))
-
-
-
-
-
-        folder_layout.addWidget(folder_placeholder)
-
-
-
-
+        folder_layout.addWidget(folder_preview_card, 0)
 
         self.main_stack.addWidget(folder_page)
 
@@ -8595,6 +8671,18 @@ class TranscribeGUI(QWidget):
 
 
         self.btn_clear_done.clicked.connect(self._clear_done_queue_rows)
+
+        self.btn_folders_open.clicked.connect(self.open_preferred_folder)
+        self.btn_folders_refresh.clicked.connect(self.refresh_folder_management_view)
+        self.btn_folders_filter_all.clicked.connect(lambda: self._set_folder_filter_mode("all"))
+        self.btn_folders_filter_done.clicked.connect(lambda: self._set_folder_filter_mode("complete"))
+        self.btn_folders_filter_pending.clicked.connect(lambda: self._set_folder_filter_mode("incomplete"))
+        self.btn_folders_filter_result_only.clicked.connect(lambda: self._set_folder_filter_mode("result_only"))
+        self.folders_table.horizontalHeader().sectionClicked.connect(self._handle_folders_table_header_clicked)
+        self.folders_table.itemSelectionChanged.connect(self._handle_folders_table_selection_changed)
+        self.folders_table.cellClicked.connect(self._handle_folders_table_cell_clicked)
+        self.folders_table.itemClicked.connect(self._handle_folders_table_item_clicked)
+        self.btn_folders_preview_full.clicked.connect(self._show_folders_preview_full_text)
 
 
 
@@ -10137,7 +10225,8 @@ class TranscribeGUI(QWidget):
 
 
             QTableWidget#FileQueueTable,
-            QTableWidget#DashboardRecentTable {
+            QTableWidget#DashboardRecentTable,
+            QTableWidget#FolderFilesTable {
 
 
 
@@ -10196,7 +10285,9 @@ class TranscribeGUI(QWidget):
             QTableWidget#FileQueueTable::item:focus,
             QTableWidget#DashboardRecentTable::item,
             QTableWidget#DashboardRecentTable::item:selected,
-            QTableWidget#DashboardRecentTable::item:focus {
+            QTableWidget#DashboardRecentTable::item:focus,
+            QTableWidget#FolderFilesTable::item,
+            QTableWidget#FolderFilesTable::item:focus {
 
 
 
@@ -10214,6 +10305,15 @@ class TranscribeGUI(QWidget):
 
 
 
+            }
+
+            QTableWidget#FolderFilesTable::item:selected,
+            QTableWidget#FolderFilesTable::item:selected:active,
+            QTableWidget#FolderFilesTable::item:selected:!active {
+                background: #eff6ff;
+                color: #1a1b21;
+                border: none;
+                outline: 0;
             }
 
 
@@ -10262,6 +10362,16 @@ class TranscribeGUI(QWidget):
 
 
 
+            }
+
+            QTextEdit#FolderPreviewText {
+                border: 1px solid #e2e8f0;
+                border-radius: 2px;
+                background: #ffffff;
+                color: #1a1b21;
+                selection-background-color: #dbeafe;
+                selection-color: #1a1b21;
+                font-size: 12px;
             }
 
 
@@ -10316,7 +10426,8 @@ class TranscribeGUI(QWidget):
 
 
 
-                padding: 8px 6px;
+                padding: 8px 22px 8px 6px;
+                margin: 0;
 
 
 
@@ -10337,9 +10448,15 @@ class TranscribeGUI(QWidget):
                 text-transform: uppercase;
 
 
+            }
 
-
-
+            QHeaderView::up-arrow,
+            QHeaderView::down-arrow {
+                subcontrol-origin: padding;
+                subcontrol-position: center right;
+                width: 10px;
+                height: 10px;
+                right: 6px;
             }
 
 
@@ -10973,6 +11090,8 @@ class TranscribeGUI(QWidget):
         self.main_stack.setCurrentIndex(mapping[tab_name])
         if tab_name == "dashboard":
             self.refresh_dashboard_view()
+        elif tab_name == "folders":
+            self.refresh_folder_management_view()
 
 
 
@@ -15981,6 +16100,327 @@ class TranscribeGUI(QWidget):
         self.save_dashboard_statistics()
         self.refresh_dashboard_view()
 
+    def _folder_status_colors(self, status_text: str) -> tuple[str, str]:
+        if status_text == FOLDER_STATUS_COMPLETE:
+            return "#dcfce7", "#15803d"
+        if status_text == FOLDER_STATUS_INCOMPLETE:
+            return "#fee2e2", "#b91c1c"
+        return "#fff7ed", "#c2410c"
+
+    def _folder_group_key(self, file_name: str) -> str:
+        cleaned = os.path.splitext(remove_page_suffix(os.path.basename(str(file_name or ""))))[0].strip().lower()
+        if cleaned:
+            return cleaned
+        return os.path.splitext(os.path.basename(str(file_name or "")))[0].strip().lower()
+
+    def _folder_type_text(self, ext: str) -> str:
+        mapping = {
+            ".mp3": "MP3",
+            ".txt": "TXT",
+            ".json": "JSON",
+            ".srt": "SRT",
+        }
+        return mapping.get(ext.lower(), ext.upper().lstrip("."))
+
+    def _folder_status_from_group(self, group_info: dict) -> str:
+        has_mp3 = bool(group_info.get("mp3"))
+        has_txt = bool(group_info.get("txt"))
+        has_json = bool(group_info.get("json"))
+        has_srt = bool(group_info.get("srt"))
+        if has_mp3 and has_txt and has_json and has_srt:
+            return FOLDER_STATUS_COMPLETE
+        if has_mp3:
+            return FOLDER_STATUS_INCOMPLETE
+        return FOLDER_STATUS_RESULT_ONLY
+
+    def _scan_folder_tab_rows(self, folder_path: str) -> list[dict]:
+        rows: list[dict] = []
+        allowed_exts = {".mp3", ".txt", ".json", ".srt"}
+        if not folder_path or not os.path.isdir(folder_path):
+            return rows
+
+        group_map: dict[str, dict] = {}
+        raw_files: list[dict] = []
+        for name in os.listdir(folder_path):
+            full_path = os.path.join(folder_path, name)
+            if not os.path.isfile(full_path):
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in allowed_exts:
+                continue
+            group_key = self._folder_group_key(name)
+            if not group_key:
+                continue
+
+            if group_key not in group_map:
+                group_map[group_key] = {"mp3": False, "txt": False, "json": False, "srt": False}
+            key_name = ext.lstrip(".")
+            if key_name in group_map[group_key]:
+                group_map[group_key][key_name] = True
+
+            try:
+                modified_ts = float(os.path.getmtime(full_path))
+            except OSError:
+                modified_ts = 0.0
+            raw_files.append(
+                {
+                    "file_name": name,
+                    "path": full_path,
+                    "ext": ext,
+                    "group_key": group_key,
+                    "modified_ts": modified_ts,
+                }
+            )
+
+        for file_info in raw_files:
+            status_text = self._folder_status_from_group(group_map.get(file_info["group_key"], {}))
+            modified_text = (
+                datetime.datetime.fromtimestamp(file_info["modified_ts"]).strftime("%Y-%m-%d %H:%M")
+                if file_info["modified_ts"] > 0
+                else "-"
+            )
+            rows.append(
+                {
+                    "file_name": file_info["file_name"],
+                    "path": file_info["path"],
+                    "ext": file_info["ext"],
+                    "type_text": self._folder_type_text(file_info["ext"]),
+                    "status_text": status_text,
+                    "modified_text": modified_text,
+                    "modified_ts": file_info["modified_ts"],
+                }
+            )
+
+        rows.sort(key=lambda x: (-float(x.get("modified_ts", 0.0)), str(x.get("file_name", "")).lower()))
+        return rows
+
+    def _read_text_file_with_fallback(self, file_path: str) -> str:
+        for enc in ("utf-8-sig", "utf-8", "cp949", "euc-kr"):
+            try:
+                with open(file_path, "r", encoding=enc) as f:
+                    return f.read()
+            except Exception:
+                continue
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            return f.read()
+
+    def _set_folder_filter_mode(self, mode: str):
+        if mode not in ("all", "complete", "incomplete", "result_only"):
+            mode = "all"
+        self.folder_tab_filter_mode = mode
+
+        button_map = {
+            "all": self.btn_folders_filter_all,
+            "complete": self.btn_folders_filter_done,
+            "incomplete": self.btn_folders_filter_pending,
+            "result_only": self.btn_folders_filter_result_only,
+        }
+        for key, btn in button_map.items():
+            btn.setEnabled(key != mode)
+
+        self._render_folder_tab_rows()
+
+    def _filtered_folder_rows(self) -> list[dict]:
+        mode = self.folder_tab_filter_mode
+        if mode == "complete":
+            return [r for r in self.folder_tab_rows if r.get("status_text") == FOLDER_STATUS_COMPLETE]
+        if mode == "incomplete":
+            return [r for r in self.folder_tab_rows if r.get("status_text") == FOLDER_STATUS_INCOMPLETE]
+        if mode == "result_only":
+            return [r for r in self.folder_tab_rows if r.get("status_text") == FOLDER_STATUS_RESULT_ONLY]
+        return list(self.folder_tab_rows)
+
+    def _render_folder_tab_rows(self):
+        rows = self._filtered_folder_rows()
+        self.folder_tab_visible_rows = list(rows)
+        self.folders_table.blockSignals(True)
+        self.folders_table.setSortingEnabled(False)
+        self.folders_table.clearSelection()
+        self.folders_table.setRowCount(len(rows))
+
+        for row_idx, row_data in enumerate(rows):
+            file_item = QTableWidgetItem(str(row_data.get("file_name", "")))
+            file_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            file_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            file_item.setData(Qt.UserRole, str(row_data.get("path", "")))
+            file_item.setData(Qt.UserRole + 1, str(row_data.get("ext", "")))
+            self.folders_table.setItem(row_idx, 0, file_item)
+
+            type_item = QTableWidgetItem(str(row_data.get("type_text", "")))
+            type_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            type_item.setTextAlignment(Qt.AlignCenter)
+            self.folders_table.setItem(row_idx, 1, type_item)
+
+            status_text = str(row_data.get("status_text", FOLDER_STATUS_INCOMPLETE))
+            status_item = QTableWidgetItem(status_text)
+            status_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            status_item.setTextAlignment(Qt.AlignCenter)
+            bg, fg = self._folder_status_colors(status_text)
+            status_item.setBackground(QColor(bg))
+            status_item.setForeground(QColor(fg))
+            self.folders_table.setItem(row_idx, 2, status_item)
+
+            modified_item = QTableWidgetItem(str(row_data.get("modified_text", "-")))
+            modified_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            modified_item.setTextAlignment(Qt.AlignCenter)
+            self.folders_table.setItem(row_idx, 3, modified_item)
+
+            self.folders_table.setRowHeight(row_idx, 34)
+
+        header = self.folders_table.horizontalHeader()
+        sort_section = header.sortIndicatorSection()
+        sort_order = header.sortIndicatorOrder()
+        if sort_section in (0, 1):
+            self.folders_table.sortItems(sort_section, sort_order)
+        self.folders_table.setSortingEnabled(False)
+        self.folders_table.horizontalHeader().setSortIndicatorShown(True)
+        self.folders_table.blockSignals(False)
+        self._handle_folders_table_selection_changed()
+
+    def _handle_folders_table_header_clicked(self, section: int):
+        if section not in (0, 1):
+            return
+
+        header = self.folders_table.horizontalHeader()
+        current_section = header.sortIndicatorSection()
+        current_order = header.sortIndicatorOrder()
+        if current_section == section:
+            next_order = Qt.DescendingOrder if current_order == Qt.AscendingOrder else Qt.AscendingOrder
+        else:
+            next_order = Qt.AscendingOrder
+
+        header.setSortIndicator(section, next_order)
+        self.folders_table.sortItems(section, next_order)
+        self._handle_folders_table_selection_changed()
+
+    def _reset_folders_preview(self, message: str = "TXT 파일을 선택하면 미리보기가 표시됩니다."):
+        self.folder_preview_full_text = ""
+        self.folder_preview_path = ""
+        self.text_folders_preview.setPlainText(message)
+        self.btn_folders_preview_full.setEnabled(False)
+
+    def _update_folders_preview_for_row(self, row: int):
+        if row < 0 or row >= self.folders_table.rowCount():
+            self._reset_folders_preview()
+            return
+
+        # sorting 호환성을 위해 table item에서 직접 데이터를 가져오는 것을 우선시함
+        file_path = ""
+        file_ext = ""
+        name_item = self.folders_table.item(row, 0)
+        if name_item is not None:
+            file_path = str(name_item.data(Qt.UserRole) or "")
+            file_ext = str(name_item.data(Qt.UserRole + 1) or "").lower()
+
+        # fallback: UserRole 데이터가 없는 경우 (만약의 경우를 대비)
+        if not file_path and row < len(self.folder_tab_visible_rows):
+            row_data = self.folder_tab_visible_rows[row]
+            file_path = str(row_data.get("path", ""))
+            file_ext = str(row_data.get("ext", "")).lower()
+
+        if file_ext != ".txt" or not file_path:
+            self._reset_folders_preview()
+            return
+
+        try:
+            full_text = self._read_text_file_with_fallback(file_path)
+        except Exception:
+            self._reset_folders_preview("파일을 읽을 수 없습니다.")
+            return
+
+        if not full_text:
+            full_text = "(내용 없음)"
+        preview_text = full_text[:500]
+        if len(full_text) > 500:
+            preview_text += "\n\n... (전체 보기 버튼으로 나머지 내용을 확인하세요)"
+
+        self.folder_preview_full_text = full_text
+        self.folder_preview_path = file_path
+        self.text_folders_preview.setPlainText(preview_text)
+        self.btn_folders_preview_full.setEnabled(True)
+
+    def _handle_folders_table_selection_changed(self):
+        row = self.folders_table.currentRow()
+        if row < 0:
+            current_item = self.folders_table.currentItem()
+            if current_item is not None:
+                row = current_item.row()
+            else:
+                selected_items = self.folders_table.selectedItems()
+                if selected_items:
+                    row = selected_items[0].row()
+        self._update_folders_preview_for_row(row)
+
+    def _handle_folders_table_cell_clicked(self, row: int, col: int):
+        if row >= 0:
+            self.folders_table.setCurrentCell(row, 0)
+        self._update_folders_preview_for_row(row)
+
+    def _handle_folders_table_item_clicked(self, item: QTableWidgetItem):
+        if item is None:
+            self._reset_folders_preview()
+            return
+        row = item.row()
+        if row >= 0:
+            self.folders_table.setCurrentCell(row, 0)
+        self._update_folders_preview_for_row(row)
+
+    def _show_folders_preview_full_text(self):
+        if not self.folder_preview_full_text:
+            self.show_info_message("알림", "전체 보기 가능한 TXT 미리보기가 없습니다.")
+            return
+
+        title_name = os.path.basename(self.folder_preview_path) if self.folder_preview_path else "텍스트 미리보기"
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f"전체 보기 - {title_name}")
+        dialog.setWindowIcon(self.windowIcon())
+        dialog.resize(760, 520)
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(16, 14, 16, 14)
+        layout.setSpacing(10)
+
+        viewer = QTextEdit()
+        viewer.setReadOnly(True)
+        viewer.setPlainText(self.folder_preview_full_text)
+        viewer.setObjectName("FolderPreviewText")
+        layout.addWidget(viewer, 1)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.Close)
+        buttons.rejected.connect(dialog.reject)
+        buttons.accepted.connect(dialog.accept)
+        layout.addWidget(buttons, 0)
+
+        dialog.exec()
+
+    def refresh_folder_management_view(self):
+        folder = self._normalize_saved_folder_path(self.target_folder)
+        folder_exists = bool(folder and os.path.isdir(folder))
+        shown_path = self._display_path_for_ui(folder) if folder_exists else "미설정"
+        self.label_folders_current_path.setText(shown_path)
+        self.label_folders_current_path.setToolTip(shown_path)
+
+        self.btn_folders_open.setEnabled(folder_exists)
+        self.btn_folders_refresh.setEnabled(folder_exists)
+
+        if not folder_exists:
+            self.folder_tab_rows = []
+            self._render_folder_tab_rows()
+            self.text_folders_preview.setPlainText("전사자료 폴더를 먼저 설정하세요.")
+            self.btn_folders_preview_full.setEnabled(False)
+            return
+
+        try:
+            self.folder_tab_rows = self._scan_folder_tab_rows(folder)
+        except Exception as e:
+            self.folder_tab_rows = []
+            self._render_folder_tab_rows()
+            self.text_folders_preview.setPlainText(f"폴더 스캔 실패: {e}")
+            self.btn_folders_preview_full.setEnabled(False)
+            return
+
+        self._render_folder_tab_rows()
+
 
 
 
@@ -20163,6 +20603,8 @@ class TranscribeGUI(QWidget):
             self.moved_transcribe_items = []
             self._load_mp3_files_from_folder(self.target_folder, append=False, show_empty_message=True)
             self._update_checked_state()
+            if hasattr(self, "folders_table"):
+                self.refresh_folder_management_view()
 
     def load_mp3_files(self, show_empty_message=True):
         try:
