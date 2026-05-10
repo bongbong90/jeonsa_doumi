@@ -356,7 +356,31 @@ def load_whisper_model():
     log(f"[*] Whisper '{MODEL_SIZE}' 모델 로드 중.. (최초 로딩 시 시간이 다소 필요할 수 있습니다)")
     import whisper
 
-    _whisper_model = whisper.load_model(MODEL_SIZE)
+    device = "cpu"
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            device = "cuda"
+    except Exception:
+        device = "cpu"
+
+    if device == "cuda":
+        log("[*] GPU 가속 사용 중")
+    else:
+        log("[*] CPU 모드로 실행 중")
+
+    try:
+        _whisper_model = whisper.load_model(MODEL_SIZE, device=device)
+    except TypeError:
+        _whisper_model = whisper.load_model(MODEL_SIZE)
+    except Exception as e:
+        if device == "cuda":
+            log(f"[WARN] GPU 모델 로드 실패로 CPU 폴백: {type(e).__name__}: {e}")
+            log("[*] CPU 모드로 실행 중")
+            _whisper_model = whisper.load_model(MODEL_SIZE, device="cpu")
+        else:
+            raise
     log("[*] 모델 로드 완료.")
     return _whisper_model
 

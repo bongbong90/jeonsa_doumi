@@ -11,6 +11,7 @@ import datetime
 
 
 import json
+import mimetypes
 
 
 
@@ -48,6 +49,7 @@ import subprocess
 
 import sys
 import threading
+import uuid
 
 
 
@@ -57,6 +59,7 @@ import time
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
 from urllib import request as urllib_request
+import webbrowser
 
 
 
@@ -4931,6 +4934,12 @@ class TrayToastWindow(QWidget):
 class ColabHealthCheckBridge(QObject):
     finished = Signal(int, str)
 
+class ColabTranscribeRunBridge(QObject):
+    event_line = Signal(str)
+    log_line = Signal(str)
+    finished = Signal(int, str, str)
+    last_comm = Signal(str)
+
 
 class TranscribeGUI(QWidget):
 
@@ -5214,6 +5223,14 @@ class TranscribeGUI(QWidget):
         self._colab_check_request_id = 0
         self._colab_health_check_bridge = ColabHealthCheckBridge()
         self._colab_health_check_bridge.finished.connect(self._on_colab_health_check_finished)
+        self._colab_run_active = False
+        self._colab_stop_after_current = False
+        self._colab_run_request_id = 0
+        self._colab_run_bridge = ColabTranscribeRunBridge()
+        self._colab_run_bridge.event_line.connect(self._on_colab_transcribe_event_line)
+        self._colab_run_bridge.log_line.connect(self._on_colab_transcribe_log_line)
+        self._colab_run_bridge.finished.connect(self._on_colab_transcribe_finished)
+        self._colab_run_bridge.last_comm.connect(self.update_colab_last_comm)
 
 
 
@@ -8160,7 +8177,18 @@ class TranscribeGUI(QWidget):
         self.btn_colab_check.setFixedHeight(32)
         self.btn_colab_check.setFixedWidth(92)
         colab_row.addWidget(self.btn_colab_check, 0)
+        self.btn_colab_open = QPushButton("Colab 열기")
+        self.btn_colab_open.setObjectName("ColabOpenButton")
+        self.btn_colab_open.setProperty("uiRole", "controlOutline")
+        self.btn_colab_open.setFixedHeight(32)
+        self.btn_colab_open.setFixedWidth(92)
+        self.btn_colab_open.clicked.connect(self.open_colab_notebook)
+        colab_row.addWidget(self.btn_colab_open, 0)
+
         colab_box.addLayout(colab_row)
+        self.label_colab_last_comm = QLabel("마지막 통신: --:--:--", objectName="TranscriptionModeLabel")
+        self.label_colab_last_comm.setStyleSheet("color: #64748b; font-size: 11px; margin-top: 2px; margin-left: 70px;")
+        colab_box.addWidget(self.label_colab_last_comm)
         engine_box.addWidget(self.colab_url_panel)
         cbox.addWidget(self.transcription_engine_panel)
 
@@ -15591,6 +15619,8 @@ class TranscribeGUI(QWidget):
 
 
 
+        if self._colab_run_active:
+            return True
         return self.process is not None and self.process.state() != QProcess.NotRunning
 
 
@@ -16788,6 +16818,9 @@ class TranscribeGUI(QWidget):
         self.btn_colab_check.setEnabled(is_colab)
 
     def _build_colab_health_url(self, raw_url: str) -> str:
+        return self._build_colab_endpoint_url(raw_url, "/health")
+
+    def _build_colab_endpoint_url(self, raw_url: str, endpoint_path: str) -> str:
         candidate = str(raw_url or "").strip()
         if not candidate:
             return ""
@@ -16800,15 +16833,14 @@ class TranscribeGUI(QWidget):
         if not parsed.scheme or not parsed.netloc:
             return ""
 
-        path = parsed.path.rstrip("/")
-        if path.endswith("/health"):
-            health_path = path
-        elif path:
-            health_path = f"{path}/health"
-        else:
-            health_path = "/health"
-
-        normalized = parsed._replace(path=health_path, query="", fragment="")
+        endpoint = "/" + str(endpoint_path or "").strip().lstrip("/")
+        base_path = parsed.path.rstrip("/")
+        for known_suffix in ("/health", "/transcribe"):
+            if base_path.lower().endswith(known_suffix):
+                base_path = base_path[: -len(known_suffix)]
+                break
+        target_path = f"{base_path}{endpoint}" if base_path else endpoint
+        normalized = parsed._replace(path=target_path, query="", fragment="")
         return normalized.geturl()
 
     def _perform_colab_health_check(self, request_id: int, health_url: str):
@@ -16838,6 +16870,319 @@ class TranscribeGUI(QWidget):
             result_code = "connection_error"
         self._colab_health_check_bridge.finished.emit(int(request_id), str(result_code))
 
+    def _build_colab_transcribe_url(self, raw_url: str) -> str:
+        return self._build_colab_endpoint_url(raw_url, "/transcribe")
+
+    def _collect_colab_runtime_targets(self, runtime_folder: str) -> list[dict]:
+        targets: list[dict] = []
+        for entry in self.selected_runtime_entries:
+            runtime_mp3 = self._normalize_saved_folder_path(entry.get("runtime_mp3", ""))
+            if not runtime_mp3 or not os.path.isfile(runtime_mp3):
+                continue
+            queue_name = str(entry.get("queue_name", "")).strip() or os.path.basename(runtime_mp3)
+            targets.append(
+                {
+                    "runtime_mp3": runtime_mp3,
+                    "event_name": queue_name,
+                }
+            )
+
+        if targets:
+            return targets
+
+        normalized_runtime = self._normalize_saved_folder_path(runtime_folder)
+        if not normalized_runtime or not os.path.isdir(normalized_runtime):
+            return []
+
+        for name in sorted(os.listdir(normalized_runtime)):
+            if not name.lower().endswith(".mp3"):
+                continue
+            runtime_mp3 = os.path.join(normalized_runtime, name)
+            if os.path.isfile(runtime_mp3):
+                targets.append({"runtime_mp3": runtime_mp3, "event_name": name})
+        return targets
+
+    def _colab_format_timestamp(self, seconds: float) -> str:
+        safe_seconds = max(0.0, float(seconds or 0.0))
+        millis = int(round(safe_seconds * 1000))
+        hours = millis // 3600000
+        millis %= 3600000
+        minutes = millis // 60000
+        millis %= 60000
+        secs = millis // 1000
+        millis %= 1000
+        return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+    def _write_colab_srt(self, result: dict, srt_path: str):
+        segments = result.get("segments", []) or []
+        with open(srt_path, "w", encoding="utf-8") as f:
+            index = 1
+            for seg in segments:
+                if not isinstance(seg, dict):
+                    continue
+                text = str(seg.get("text", "") or "").strip()
+                if not text:
+                    continue
+                start = float(seg.get("start", 0.0) or 0.0)
+                end = float(seg.get("end", 0.0) or 0.0)
+                f.write(f"{index}\n")
+                f.write(f"{self._colab_format_timestamp(start)} --> {self._colab_format_timestamp(end)}\n")
+                f.write(text + "\n\n")
+                index += 1
+
+    def _save_colab_result_files(self, audio_path: str, result: dict):
+        txt_path, json_path, srt_path = self._output_triplet(audio_path)
+        with open(txt_path, "w", encoding="utf-8") as f:
+            f.write(str(result.get("text", "") or "").strip() + "\n")
+        with open(json_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+        self._write_colab_srt(result, srt_path)
+
+    def _encode_colab_multipart_file(self, file_path: str) -> tuple[bytes, str]:
+        boundary = f"----TranscribeHelperBoundary{uuid.uuid4().hex}"
+        boundary_bytes = boundary.encode("ascii")
+        crlf = b"\r\n"
+        file_name = os.path.basename(file_path)
+        mime_type = mimetypes.guess_type(file_name)[0] or "application/octet-stream"
+
+        with open(file_path, "rb") as f:
+            file_bytes = f.read()
+
+        body = bytearray()
+        body.extend(b"--" + boundary_bytes + crlf)
+        body.extend(b'Content-Disposition: form-data; name="language"' + crlf + crlf)
+        body.extend(b"ko" + crlf)
+        body.extend(b"--" + boundary_bytes + crlf)
+        body.extend(
+            (
+                f'Content-Disposition: form-data; name="file"; filename="{file_name}"'
+            ).encode("utf-8")
+            + crlf
+        )
+        body.extend((f"Content-Type: {mime_type}").encode("utf-8") + crlf + crlf)
+        body.extend(file_bytes + crlf)
+        body.extend(b"--" + boundary_bytes + b"--" + crlf)
+
+        content_type = f"multipart/form-data; boundary={boundary}"
+        return bytes(body), content_type
+
+    def _post_colab_transcribe(self, transcribe_url: str, file_path: str) -> dict:
+        body, content_type = self._encode_colab_multipart_file(file_path)
+        req = urllib_request.Request(
+            transcribe_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(req, timeout=600) as response:
+            payload_bytes = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+
+        try:
+            payload = json.loads(payload_bytes.decode(charset, errors="replace"))
+        except json.JSONDecodeError as exc:
+            raise ValueError("Colab 서버 응답이 JSON 형식이 아닙니다.") from exc
+
+        if not isinstance(payload, dict):
+            raise ValueError("Colab 서버 응답 형식이 올바르지 않습니다.")
+
+        if str(payload.get("error", "") or "").strip():
+            raise RuntimeError(str(payload.get("error")).strip())
+
+        text_value = str(payload.get("text", "") or "").strip()
+        raw_segments = payload.get("segments", [])
+        if not isinstance(raw_segments, list):
+            raw_segments = []
+
+        normalized_segments: list[dict] = []
+        for idx, seg in enumerate(raw_segments):
+            if not isinstance(seg, dict):
+                continue
+            seg_text = str(seg.get("text", "") or "").strip()
+            start = float(seg.get("start", 0.0) or 0.0)
+            end = float(seg.get("end", 0.0) or 0.0)
+            normalized_segments.append(
+                {
+                    "id": int(seg.get("id", idx) or idx),
+                    "start": max(0.0, start),
+                    "end": max(0.0, end),
+                    "text": seg_text,
+                }
+            )
+
+        normalized_payload = dict(payload)
+        normalized_payload["text"] = text_value
+        normalized_payload["segments"] = normalized_segments
+        normalized_payload["language"] = str(payload.get("language", "") or "").strip() or "ko"
+        return normalized_payload
+
+    def _start_colab_transcribe_run(self, runtime_folder: str) -> bool:
+        colab_url = str(self.input_colab_url.text() or "").strip()
+        transcribe_url = self._build_colab_transcribe_url(colab_url)
+        if not self.btn_colab_check.property("connected"):
+            self.show_info_message("알림", "Colab 연결을 먼저 확인해 주세요.")
+            self.set_transcribe_buttons_enabled(True)
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
+            return False
+
+        if not transcribe_url:
+            self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
+            self.set_transcribe_buttons_enabled(True)
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
+            return False
+
+        run_targets = self._collect_colab_runtime_targets(runtime_folder)
+        if not run_targets:
+            self.set_transcribe_buttons_enabled(True)
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
+            self.show_info_message("알림", "이번 실행에서 처리할 파일이 없습니다.")
+            return False
+
+        self.total_target_mp3_files = len(run_targets)
+        self.update_total_progress_display()
+        self.update_eta_labels(initial=True)
+
+        self._colab_run_active = True
+        self._colab_stop_after_current = False
+        self._colab_run_request_id += 1
+        request_id = self._colab_run_request_id
+        self._set_status_text(self._run_mode_in_progress_text())
+        self._set_current_file_text("없음")
+        self.append_log_text(f"[GUI] Colab 전사 시작: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+
+        worker = threading.Thread(
+            target=self._run_colab_transcribe_worker,
+            args=(request_id, transcribe_url, run_targets),
+            daemon=True,
+        )
+        worker.start()
+        return True
+
+    def _run_colab_transcribe_worker(self, request_id: int, transcribe_url: str, run_targets: list[dict]):
+        def _emit_comm_time():
+            now_str = datetime.datetime.now().strftime("%H:%M:%S")
+            self._colab_run_bridge.last_comm.emit(now_str)
+
+        def _safe_token(value) -> str:
+            return str(value or "").replace("\r", " ").replace("\n", " ").replace("|", "/").strip()
+
+        def _emit_event(evt: str, *payload):
+            parts = [str(evt)] + [_safe_token(v) for v in payload]
+            line = "[EVENT] " + "|".join(parts)
+            self._colab_run_bridge.event_line.emit(line)
+
+        def _emit_log(text: str):
+            self._colab_run_bridge.log_line.emit(str(text or ""))
+
+        try:
+            total = len(run_targets)
+            _emit_event("TOTAL_FILES", total, 0, total)
+
+            if total <= 0:
+                _emit_event("ALL_DONE")
+                self._colab_run_bridge.finished.emit(int(request_id), "done", "")
+                return
+
+            stopped = False
+            for idx, target in enumerate(run_targets, start=1):
+                if int(request_id) != int(self._colab_run_request_id):
+                    return
+                if self._colab_stop_after_current:
+                    stopped = True
+                    break
+
+                runtime_mp3 = str(target.get("runtime_mp3", "") or "").strip()
+                event_name = _safe_token(target.get("event_name", os.path.basename(runtime_mp3)))
+                if not runtime_mp3 or not os.path.isfile(runtime_mp3):
+                    _emit_event("FILE_FAIL", event_name, "파일을 찾을 수 없습니다.")
+                    if self._colab_stop_after_current:
+                        stopped = True
+                        break
+                    continue
+
+                _emit_event("FILE_INDEX", idx, total, event_name)
+                try:
+                    result = self._post_colab_transcribe(transcribe_url, runtime_mp3)
+                    _emit_comm_time()
+                    self._save_colab_result_files(runtime_mp3, result)
+                    _emit_event("FILE_DONE", event_name)
+                    _emit_log(f"[GUI] Colab 전사 완료: {event_name}\n")
+                except urllib_error.HTTPError as exc:
+                    err_text = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
+                    _emit_event("FILE_FAIL", event_name, err_text or "HTTP 오류")
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+                except (TimeoutError, urllib_error.URLError, OSError, ValueError, RuntimeError) as exc:
+                    err_text = _safe_token(str(exc) or "요청 실패")
+                    _emit_event("FILE_FAIL", event_name, err_text)
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+                except Exception as exc:
+                    err_text = _safe_token(str(exc) or "알 수 없는 오류")
+                    _emit_event("FILE_FAIL", event_name, err_text)
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+
+                if self._colab_stop_after_current:
+                    stopped = True
+                    break
+
+            if stopped:
+                _emit_event("ALL_STOPPED")
+                self._colab_run_bridge.finished.emit(int(request_id), "stopped", "")
+                return
+
+            _emit_event("ALL_DONE")
+            self._colab_run_bridge.finished.emit(int(request_id), "done", "")
+        except Exception as exc:
+            self._colab_run_bridge.finished.emit(int(request_id), "error", str(exc))
+
+    def _on_colab_transcribe_event_line(self, line: str):
+        try:
+            self.process_event_line(str(line or ""))
+        except Exception:
+            pass
+
+    def _on_colab_transcribe_log_line(self, text: str):
+        if not text:
+            return
+        message = str(text)
+        if not message.endswith("\n"):
+            message += "\n"
+        self.append_log_text(message)
+
+    def _on_colab_transcribe_finished(self, request_id: int, outcome: str, detail: str):
+        if int(request_id) != int(self._colab_run_request_id):
+            return
+
+        self._colab_run_active = False
+        self._colab_stop_after_current = False
+        self.set_transcribe_buttons_enabled(True)
+        self._sync_selected_runtime_outputs()
+        self.selected_run_items = []
+        self.update_session_label()
+
+        if outcome == "error":
+            self._set_status_text("오류 발생")
+            if detail:
+                self.append_log_text(f"[GUI] Colab 전사 런타임 오류: {detail}\n")
+            self.show_error_message("오류", f"Colab 전사 처리 중 오류가 발생했습니다.\n\n{detail or '-'}")
+
+        self.stop_requested = False
+        self.pending_kill = False
+        self.stop_terminate_sent = False
+
+
+    def open_colab_notebook(self):
+        url = "https://github.com/bongbong90/jeonsa_doumi/blob/main/colab_transcribe.ipynb"
+        webbrowser.open(url)
+
+    def update_colab_last_comm(self, timestamp_str):
+        self.label_colab_last_comm.setText(f"마지막 통신: {timestamp_str}")
     def _on_colab_url_text_changed(self, text: str):
         self.colab_url = str(text or "").strip()
         if self._colab_check_connected:
@@ -20466,7 +20811,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        if self.process is not None and self.process.state() != QProcess.NotRunning:
+        if self._is_transcribe_running():
 
 
 
@@ -23379,18 +23724,25 @@ class TranscribeGUI(QWidget):
 
     def run_transcribe_process(self):
         has_selected_runtime_items = self.run_mode in ("selected", "all", "moved") and bool(self.selected_run_items)
+        engine = self._current_transcription_engine()
         if not self.target_folder and not has_selected_runtime_items:
             self.show_warning_message("\uACBD\uACE0", "\uBA3C\uC800 \uC804\uC0AC \uD3F4\uB354 \uB610\uB294 \uD30C\uC77C \uBAA9\uB85D\uC744 \uC900\uBE44\uD574 \uC8FC\uC138\uC694.")
             return
 
-        auto_path = self.get_auto_transcribe_path()
-        if not os.path.exists(auto_path):
-            self.show_error_message("\uC624\uB958", f"auto_transcribe.py \uD30C\uC77C\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uD655\uC778 \uACBD\uB85C:\\n{auto_path}")
-            return
-
-        if self.process is not None:
+        if self._is_transcribe_running():
             self.show_warning_message("\uACBD\uACE0", "\uC774\uBBF8 \uC804\uC0AC \uC791\uC5C5\uC774 \uC9C4\uD589 \uC911\uC785\uB2C8\uB2E4.")
             return
+
+        if engine == "colab":
+            colab_url = str(self.input_colab_url.text() or "").strip()
+            if not colab_url or not self._colab_check_connected:
+                self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
+                return
+        else:
+            auto_path = self.get_auto_transcribe_path()
+            if not os.path.exists(auto_path):
+                self.show_error_message("\uC624\uB958", f"auto_transcribe.py \uD30C\uC77C\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uD655\uC778 \uACBD\uB85C:\\n{auto_path}")
+                return
 
         runtime_folder = self.target_folder if self.target_folder else self.get_base_dir()
 
@@ -23402,7 +23754,10 @@ class TranscribeGUI(QWidget):
             self.selected_run_items = []
             self._cleanup_selected_runtime_folder()
 
-        _pending = self.count_pending_mp3_files(runtime_folder)
+        if engine == "colab":
+            _pending = len(self._collect_colab_runtime_targets(runtime_folder))
+        else:
+            _pending = self.count_pending_mp3_files(runtime_folder)
         self.append_log_text(f"[DBG] run_transcribe_process: run_mode={self.run_mode!r}, runtime_folder={runtime_folder!r}, pending={_pending}\\n", force=True)
 
         if _pending <= 0:
@@ -23436,6 +23791,11 @@ class TranscribeGUI(QWidget):
         self.prepare_progress_tracking(runtime_folder=runtime_folder)
         self.set_transcribe_buttons_enabled(False)
         self.update_session_label()
+
+        if engine == "colab":
+            if not self._start_colab_transcribe_run(runtime_folder):
+                return
+            return
 
         self.process = QProcess(self)
         self.process.setProgram("python" if getattr(sys, "frozen", False) else sys.executable)
@@ -23813,6 +24173,16 @@ class TranscribeGUI(QWidget):
 
 
 
+        if self._colab_run_active and (self.process is None or self.process.state() == QProcess.NotRunning):
+            self.stop_requested = True
+            self._colab_stop_after_current = True
+            self.pending_kill = False
+            self.stop_terminate_sent = False
+            self._set_status_text("\uD604\uC7AC \uC0C1\uD0DC: \uC911\uC9C0 \uC694\uCCAD\uB428")
+            self._append_user_log("\uC804\uC0AC \uC911\uC9C0 \uC694\uCCAD")
+            self.append_log_text("[INFO] Colab 전사 중지 요청 감지 - 현재 파일 완료 후 중단\n")
+            return
+
         if self.process is None or self.process.state() == QProcess.NotRunning:
 
 
@@ -24065,7 +24435,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        running = self.process is not None and self.process.state() != QProcess.NotRunning
+        running = self._is_transcribe_running()
 
 
 
