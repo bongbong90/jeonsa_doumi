@@ -388,6 +388,7 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 ETA_EMPTY_TEXT = "-"
 DEFAULT_WHISPER_TIME_RATIO = 0.5
 COLAB_CHUNK_SECONDS = 600
+COLAB_PROGRESS_FILENAME = "progress.json"
 
 
 
@@ -5234,6 +5235,10 @@ class TranscribeGUI(QWidget):
         self._colab_run_bridge.log_line.connect(self._on_colab_transcribe_log_line)
         self._colab_run_bridge.finished.connect(self._on_colab_transcribe_finished)
         self._colab_run_bridge.last_comm.connect(self.update_colab_last_comm)
+        self._colab_resume_enabled = False
+        self._colab_resume_completed_keys: set[str] = set()
+        self._colab_resume_session_id = ""
+        self._colab_resume_progress_path_key = ""
 
 
 
@@ -5332,6 +5337,7 @@ class TranscribeGUI(QWidget):
 
 
         self.load_ui_preferences()
+        QTimer.singleShot(0, self._check_colab_progress_resume_on_startup)
         self.load_dashboard_statistics()
         self.refresh_dashboard_view()
         self._set_folder_filter_mode("all")
@@ -16897,17 +16903,249 @@ class TranscribeGUI(QWidget):
     def _build_colab_transcribe_url(self, raw_url: str) -> str:
         return self._build_colab_endpoint_url(raw_url, "/transcribe")
 
+    def _colab_path_key(self, path: str) -> str:
+        normalized = self._normalize_saved_folder_path(path)
+        if not normalized:
+            return ""
+        try:
+            normalized = os.path.abspath(normalized)
+        except Exception:
+            pass
+        return os.path.normcase(normalized)
+
+    def _colab_now_text(self) -> str:
+        return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    def _colab_progress_path_for_runtime(self, runtime_folder: str = "") -> str:
+        base_folder = self._normalize_saved_folder_path(self.target_folder)
+        if not base_folder:
+            base_folder = self._normalize_saved_folder_path(runtime_folder)
+        if not base_folder or not os.path.isdir(base_folder):
+            return ""
+        return os.path.join(base_folder, COLAB_PROGRESS_FILENAME)
+
+    def _load_colab_progress_payload_safely(self, progress_path: str):
+        if not progress_path or not os.path.isfile(progress_path):
+            return None
+        try:
+            with open(progress_path, "r", encoding="utf-8-sig") as f:
+                payload = json.load(f)
+            if isinstance(payload, dict):
+                return payload
+        except Exception:
+            return None
+        return None
+
+    def _extract_colab_progress_completed_items(self, payload) -> list[dict]:
+        if not isinstance(payload, dict):
+            return []
+        raw_items = payload.get("completed_files", [])
+        if not isinstance(raw_items, list):
+            return []
+        items: list[dict] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            mp3_path = self._normalize_saved_folder_path(raw.get("mp3_path", ""))
+            if not mp3_path:
+                continue
+            items.append(
+                {
+                    "mp3_path": mp3_path,
+                    "txt_path": str(raw.get("txt_path", "") or ""),
+                    "json_path": str(raw.get("json_path", "") or ""),
+                    "srt_path": str(raw.get("srt_path", "") or ""),
+                    "completed_at": str(raw.get("completed_at", "") or ""),
+                }
+            )
+        return items
+
+    def _save_colab_progress_payload_safely(self, progress_path: str, payload: dict):
+        if not progress_path or not isinstance(payload, dict):
+            return
+        try:
+            parent = os.path.dirname(progress_path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent, exist_ok=True)
+            with open(progress_path, "w", encoding="utf-8") as f:
+                json.dump(payload, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def _remove_colab_progress_file_safely(self, progress_path: str):
+        if not progress_path:
+            return
+        try:
+            if os.path.isfile(progress_path):
+                os.remove(progress_path)
+        except Exception:
+            pass
+
+    def _clear_colab_resume_state(self):
+        self._colab_resume_enabled = False
+        self._colab_resume_completed_keys.clear()
+        self._colab_resume_session_id = ""
+        self._colab_resume_progress_path_key = ""
+
+    def _confirm_colab_resume_progress_dialog(self) -> bool:
+        dialog, button_box = self._build_message_box(
+            "이전 전사 작업",
+            "이전 전사 작업이 있습니다. 이어서 진행할까요?",
+            QMessageBox.Question,
+            parent_override=self,
+        )
+        yes_btn = button_box.addButton("예", QDialogButtonBox.AcceptRole)
+        yes_btn.setObjectName("DialogPrimaryButton")
+        no_btn = button_box.addButton("아니오", QDialogButtonBox.RejectRole)
+        no_btn.setObjectName("DialogSecondaryButton")
+        yes_btn.clicked.connect(dialog.accept)
+        no_btn.clicked.connect(dialog.reject)
+        return dialog.exec() == QDialog.Accepted
+
+    def _check_colab_progress_resume_on_startup(self):
+        progress_path = self._colab_progress_path_for_runtime(self.target_folder)
+        payload = self._load_colab_progress_payload_safely(progress_path)
+        if not payload:
+            return
+        engine = str(payload.get("engine", "colab") or "").strip().lower()
+        if engine and engine != "colab":
+            return
+
+        completed_items = self._extract_colab_progress_completed_items(payload)
+        progress_key = self._colab_path_key(progress_path)
+        if not progress_key:
+            return
+
+        if self._confirm_colab_resume_progress_dialog():
+            session_id = str(payload.get("session_id", "") or "").strip()
+            if not session_id:
+                session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            completed_keys: set[str] = set()
+            for item in completed_items:
+                item_key = self._colab_path_key(item.get("mp3_path", ""))
+                if item_key:
+                    completed_keys.add(item_key)
+            self._colab_resume_enabled = True
+            self._colab_resume_completed_keys = completed_keys
+            self._colab_resume_session_id = session_id
+            self._colab_resume_progress_path_key = progress_key
+            self.append_log_text(
+                f"[GUI] Colab 이어하기 준비 완료: 완료 파일 {len(completed_keys)}개, 세션={session_id}\n",
+                force=True,
+            )
+            return
+
+        self._remove_colab_progress_file_safely(progress_path)
+        self._clear_colab_resume_state()
+
+    def _is_colab_resume_active_for_runtime(self, runtime_folder: str) -> bool:
+        if not self._colab_resume_enabled:
+            return False
+        progress_path = self._colab_progress_path_for_runtime(runtime_folder)
+        progress_key = self._colab_path_key(progress_path)
+        if not progress_key:
+            return False
+        return progress_key == self._colab_resume_progress_path_key
+
+    def _build_colab_progress_state(self, runtime_folder: str, run_targets: list[dict]) -> dict:
+        progress_path = self._colab_progress_path_for_runtime(runtime_folder)
+        resume_active = self._is_colab_resume_active_for_runtime(runtime_folder)
+        completed_map: dict[str, dict] = {}
+        session_id = ""
+        total_files = len(run_targets)
+
+        payload = self._load_colab_progress_payload_safely(progress_path) if resume_active else None
+        if payload:
+            session_id = str(payload.get("session_id", "") or "").strip()
+            try:
+                total_files = int(payload.get("total_files", total_files))
+            except (TypeError, ValueError):
+                total_files = len(run_targets)
+            for item in self._extract_colab_progress_completed_items(payload):
+                item_key = self._colab_path_key(item.get("mp3_path", ""))
+                if item_key:
+                    completed_map[item_key] = item
+
+        if not session_id:
+            session_id = self._colab_resume_session_id if resume_active else ""
+        if not session_id:
+            session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+        total_files = max(int(total_files), len(run_targets) + len(completed_map))
+        if total_files <= 0:
+            total_files = len(run_targets)
+
+        state = {
+            "path": progress_path,
+            "session_id": session_id,
+            "total_files": total_files,
+            "completed_map": completed_map,
+        }
+
+        payload_to_save = {
+            "session_id": session_id,
+            "engine": "colab",
+            "total_files": int(total_files),
+            "completed_files": list(completed_map.values()),
+            "last_updated": self._colab_now_text(),
+        }
+        self._save_colab_progress_payload_safely(progress_path, payload_to_save)
+
+        self._colab_resume_enabled = True
+        self._colab_resume_session_id = session_id
+        self._colab_resume_progress_path_key = self._colab_path_key(progress_path)
+        self._colab_resume_completed_keys = set(completed_map.keys())
+        return state
+
+    def _record_colab_progress_completion(
+        self,
+        progress_state: dict,
+        mp3_path: str,
+        txt_path: str,
+        json_path: str,
+        srt_path: str,
+    ):
+        if not isinstance(progress_state, dict):
+            return
+        item_key = self._colab_path_key(mp3_path)
+        if not item_key:
+            return
+        completed_map = progress_state.setdefault("completed_map", {})
+        completed_map[item_key] = {
+            "mp3_path": self._normalize_saved_folder_path(mp3_path),
+            "txt_path": str(txt_path or ""),
+            "json_path": str(json_path or ""),
+            "srt_path": str(srt_path or ""),
+            "completed_at": self._colab_now_text(),
+        }
+        self._colab_resume_completed_keys.add(item_key)
+        payload = {
+            "session_id": str(progress_state.get("session_id", "") or ""),
+            "engine": "colab",
+            "total_files": int(progress_state.get("total_files", 0) or 0),
+            "completed_files": list(completed_map.values()),
+            "last_updated": self._colab_now_text(),
+        }
+        self._save_colab_progress_payload_safely(str(progress_state.get("path", "") or ""), payload)
+
     def _collect_colab_runtime_targets(self, runtime_folder: str) -> list[dict]:
         targets: list[dict] = []
+        resume_active = self._is_colab_resume_active_for_runtime(runtime_folder)
+        resume_completed = self._colab_resume_completed_keys if resume_active else set()
         for entry in self.selected_runtime_entries:
             runtime_mp3 = self._normalize_saved_folder_path(entry.get("runtime_mp3", ""))
             if not runtime_mp3 or not os.path.isfile(runtime_mp3):
+                continue
+            source_mp3 = self._normalize_saved_folder_path(entry.get("target_mp3", "")) or runtime_mp3
+            source_key = self._colab_path_key(source_mp3)
+            if resume_active and source_key and source_key in resume_completed:
                 continue
             queue_name = str(entry.get("queue_name", "")).strip() or os.path.basename(runtime_mp3)
             targets.append(
                 {
                     "runtime_mp3": runtime_mp3,
                     "event_name": queue_name,
+                    "source_mp3": source_mp3,
                 }
             )
 
@@ -16923,7 +17161,10 @@ class TranscribeGUI(QWidget):
                 continue
             runtime_mp3 = os.path.join(normalized_runtime, name)
             if os.path.isfile(runtime_mp3):
-                targets.append({"runtime_mp3": runtime_mp3, "event_name": name})
+                source_key = self._colab_path_key(runtime_mp3)
+                if resume_active and source_key and source_key in resume_completed:
+                    continue
+                targets.append({"runtime_mp3": runtime_mp3, "event_name": name, "source_mp3": runtime_mp3})
         return targets
 
     def _colab_safe_seconds(self, value, default: float = 0.0) -> float:
@@ -17188,6 +17429,7 @@ class TranscribeGUI(QWidget):
             self.selected_run_items = []
             self.show_info_message("알림", "이번 실행에서 처리할 파일이 없습니다.")
             return False
+        progress_state = self._build_colab_progress_state(runtime_folder, run_targets)
 
         self.total_target_mp3_files = len(run_targets)
         self.update_total_progress_display()
@@ -17203,13 +17445,19 @@ class TranscribeGUI(QWidget):
 
         worker = threading.Thread(
             target=self._run_colab_transcribe_worker,
-            args=(request_id, transcribe_url, run_targets),
+            args=(request_id, transcribe_url, run_targets, progress_state),
             daemon=True,
         )
         worker.start()
         return True
 
-    def _run_colab_transcribe_worker(self, request_id: int, transcribe_url: str, run_targets: list[dict]):
+    def _run_colab_transcribe_worker(
+        self,
+        request_id: int,
+        transcribe_url: str,
+        run_targets: list[dict],
+        progress_state: dict | None = None,
+    ):
         def _emit_comm_time():
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
             self._colab_run_bridge.last_comm.emit(now_str)
@@ -17342,6 +17590,14 @@ class TranscribeGUI(QWidget):
 
                     stage = "결과 파일 저장"
                     txt_path, json_path, srt_path = self._save_colab_result_files(runtime_mp3, merged_result)
+                    source_mp3 = self._normalize_saved_folder_path(target.get("source_mp3", "")) or runtime_mp3
+                    self._record_colab_progress_completion(
+                        progress_state or {},
+                        source_mp3,
+                        txt_path,
+                        json_path,
+                        srt_path,
+                    )
                     _emit_log(f"[GUI] Colab 결과 저장 완료: {event_name}\n")
                     _emit_log(f"[GUI] 저장 경로: TXT={txt_path}\n")
                     _emit_log(f"[GUI] 저장 경로: JSON={json_path}\n")
@@ -17399,6 +17655,7 @@ class TranscribeGUI(QWidget):
                 self._colab_run_bridge.finished.emit(int(request_id), "stopped", "")
                 return
 
+            self._remove_colab_progress_file_safely(str((progress_state or {}).get("path", "") or ""))
             _emit_event("ALL_DONE")
             self._colab_run_bridge.finished.emit(int(request_id), "done", "")
         except Exception as exc:
@@ -17437,6 +17694,11 @@ class TranscribeGUI(QWidget):
         self._sync_selected_runtime_outputs()
         self.selected_run_items = []
         self.update_session_label()
+
+        if outcome == "done":
+            progress_path = self._colab_progress_path_for_runtime(self.target_folder)
+            self._remove_colab_progress_file_safely(progress_path)
+            self._clear_colab_resume_state()
 
         if outcome == "error":
             self._set_status_text("오류 발생")
