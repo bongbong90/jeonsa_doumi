@@ -17224,32 +17224,32 @@ class TranscribeGUI(QWidget):
                 runtime_mp3 = str(target.get("runtime_mp3", "") or "").strip()
                 event_name = _safe_token(target.get("event_name", os.path.basename(runtime_mp3)))
                 if not runtime_mp3 or not os.path.isfile(runtime_mp3):
-                    _emit_event("FILE_FAIL", event_name, "??? ?? ? ????.")
-                    _emit_log(f"[GUI] Colab ?? ?? ??: ??={event_name}, ??=?? ??, ??={runtime_mp3}\n")
+                    _emit_event("FILE_FAIL", event_name, "파일을 찾을 수 없습니다.")
+                    _emit_log(f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계=파일 확인, 경로={runtime_mp3}\n")
                     if self._colab_stop_after_current:
                         stopped = True
                         break
                     continue
 
                 _emit_event("FILE_INDEX", idx, total, event_name)
-                stage = "?? ??"
+                stage = "분할 준비"
                 chunk_dir = ""
                 try:
                     try:
                         file_size = os.path.getsize(runtime_mp3)
                     except OSError:
                         file_size = 0
-                    _emit_log(f"[GUI] Colab ?? ??: {event_name} ({file_size} bytes)\n")
+                    _emit_log(f"[GUI] Colab 요청 시작: {event_name} ({file_size} bytes)\n")
 
-                    stage = "MP3 ??"
+                    stage = "MP3 분할"
                     chunk_infos, chunk_dir = self._split_mp3_for_colab_chunks(
                         runtime_mp3, chunk_seconds=COLAB_CHUNK_SECONDS
                     )
                     chunk_total = len(chunk_infos)
                     if chunk_total <= 0:
-                        raise RuntimeError("?? ??? ???? ?????.")
+                        raise RuntimeError("분할 조각이 생성되지 않았습니다.")
                     _emit_log(
-                        f"[GUI] MP3 ?? ??: {event_name} / ?? {chunk_total}? (?? {int(COLAB_CHUNK_SECONDS)}?)\n"
+                        f"[GUI] MP3 분할 완료: {event_name} / 조각 {chunk_total}개 (단위 {int(COLAB_CHUNK_SECONDS)}초)\n"
                     )
 
                     merged_segments: list[dict] = []
@@ -17262,7 +17262,7 @@ class TranscribeGUI(QWidget):
 
                         chunk_path = str(chunk.get("path", "") or "").strip()
                         chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
-                        stage = f"?? ?? {chunk_idx}/{chunk_total}"
+                        stage = f"조각 전송 {chunk_idx}/{chunk_total}"
 
                         chunk_result = self._post_colab_transcribe(transcribe_url, chunk_path)
                         _emit_comm_time()
@@ -17294,11 +17294,11 @@ class TranscribeGUI(QWidget):
                             )
 
                         _emit_event("FILE_PROGRESS", event_name, chunk_idx, chunk_total)
-                        _emit_log(f"[GUI] Colab ?? ??: {event_name} ({chunk_idx}/{chunk_total})\n")
+                        _emit_log(f"[GUI] Colab 조각 완료: {event_name} ({chunk_idx}/{chunk_total})\n")
 
                         if self._colab_stop_after_current and chunk_idx < chunk_total:
                             _emit_log(
-                                f"[GUI] ?? ?? ??: ?? ?? ?? ? ?? ({event_name}, {chunk_idx}/{chunk_total})\n"
+                                f"[GUI] 중지 요청 감지: 현재 조각 완료 후 중단 ({event_name}, {chunk_idx}/{chunk_total})\n"
                             )
                             stopped = True
                             break
@@ -17306,52 +17306,52 @@ class TranscribeGUI(QWidget):
                     if stopped:
                         break
 
-                    stage = "?? ??"
+                    stage = "결과 병합"
                     merged_result = {
                         "text": " ".join(merged_text_parts).strip(),
                         "segments": merged_segments,
                         "language": merged_language or "ko",
                     }
 
-                    stage = "?? ?? ??"
+                    stage = "결과 파일 저장"
                     txt_path, json_path, srt_path = self._save_colab_result_files(runtime_mp3, merged_result)
-                    _emit_log(f"[GUI] Colab ?? ?? ??: {event_name}\n")
-                    _emit_log(f"[GUI] ?? ??: TXT={txt_path}\n")
-                    _emit_log(f"[GUI] ?? ??: JSON={json_path}\n")
-                    _emit_log(f"[GUI] ?? ??: SRT={srt_path}\n")
+                    _emit_log(f"[GUI] Colab 결과 저장 완료: {event_name}\n")
+                    _emit_log(f"[GUI] 저장 경로: TXT={txt_path}\n")
+                    _emit_log(f"[GUI] 저장 경로: JSON={json_path}\n")
+                    _emit_log(f"[GUI] 저장 경로: SRT={srt_path}\n")
                     _emit_event("FILE_DONE", event_name)
-                    _emit_log(f"[GUI] Colab ?? ??: {event_name}\n")
+                    _emit_log(f"[GUI] Colab 전사 완료: {event_name}\n")
                 except urllib_error.HTTPError as exc:
                     err_text = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
-                    _emit_event("FILE_FAIL", event_name, err_text or "HTTP ??")
-                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    _emit_event("FILE_FAIL", event_name, err_text or "HTTP 오류")
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
                     try:
                         body_bytes = exc.read()
                         body_text = body_bytes.decode("utf-8", errors="replace").strip() if body_bytes else ""
                     except Exception:
                         body_text = ""
                     if body_text:
-                        _emit_log(f"[GUI] Colab HTTP ?? ??: {body_text[:400]}\n")
+                        _emit_log(f"[GUI] Colab HTTP 응답 본문: {body_text[:400]}\n")
                     _emit_log(
-                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={err_text}\n"
+                        f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={err_text}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
                 except (TimeoutError, urllib_error.URLError, OSError, ValueError, RuntimeError) as exc:
-                    raw_error = str(exc) or "?? ??"
+                    raw_error = str(exc) or "요청 실패"
                     err_text = _safe_token(raw_error)
                     _emit_event("FILE_FAIL", event_name, err_text)
-                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
                     _emit_log(
-                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={raw_error}\n"
+                        f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={raw_error}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
                 except Exception as exc:
-                    raw_error = str(exc) or "? ? ?? ??"
+                    raw_error = str(exc) or "알 수 없는 오류"
                     err_text = _safe_token(raw_error)
                     _emit_event("FILE_FAIL", event_name, err_text)
-                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
                     _emit_log(
-                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={raw_error}\n"
+                        f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={raw_error}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
                 finally:
@@ -17360,7 +17360,7 @@ class TranscribeGUI(QWidget):
                             shutil.rmtree(chunk_dir, ignore_errors=True)
                         except Exception as cleanup_exc:
                             _emit_log(
-                                f"[GUI] Colab ?? ?? ?? ?? ??: {chunk_dir} ({type(cleanup_exc).__name__}: {cleanup_exc})\n"
+                                f"[GUI] Colab 임시 조각 폴더 정리 실패: {chunk_dir} ({type(cleanup_exc).__name__}: {cleanup_exc})\n"
                             )
 
                 if self._colab_stop_after_current:
@@ -17376,9 +17376,9 @@ class TranscribeGUI(QWidget):
             self._colab_run_bridge.finished.emit(int(request_id), "done", "")
         except Exception as exc:
             _emit_log(
-                f"[GUI] Colab ?? ?? ??: ??=?? ??, ??={type(exc).__name__}, ???={str(exc)}\n"
+                f"[GUI] Colab 워커 치명 오류: 단계=워커 루프, 예외={type(exc).__name__}, 메시지={str(exc)}\n"
             )
-            _emit_log(f"[GUI] Colab ?? traceback:\n{traceback.format_exc()}\n")
+            _emit_log(f"[GUI] Colab 워커 traceback:\n{traceback.format_exc()}\n")
             self._colab_run_bridge.finished.emit(int(request_id), "error", str(exc))
 
     def _on_colab_transcribe_event_line(self, line: str):
