@@ -371,6 +371,7 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 
 
 ETA_EMPTY_TEXT = "-"
+DEFAULT_WHISPER_TIME_RATIO = 0.5
 
 
 
@@ -480,6 +481,7 @@ QUEUE_STATUS_DONE = "DONE"
 
 QUEUE_STATUS_FAILED = "FAILED"
 QUEUE_STATUS_MOVED = "MOVED"
+QUEUE_STATUS_STOP = "STOP"
 
 
 
@@ -517,6 +519,7 @@ QUEUE_STATUS_STYLE = {
 
     QUEUE_STATUS_FAILED: ("#fee2e2", "#b91c1c"),
     QUEUE_STATUS_MOVED: ("#e0e7ff", "#3730a3"),
+    QUEUE_STATUS_STOP: ("#ffedd5", "#c2410c"),
 
 
 
@@ -5078,6 +5081,15 @@ class TranscribeGUI(QWidget):
 
         self.file_duration_history = []
 
+        self.duration_eta_ratio = DEFAULT_WHISPER_TIME_RATIO
+        self.duration_eta_ratio_calibrated = False
+        self.run_total_audio_seconds = 0.0
+        self.run_done_audio_seconds = 0.0
+        self.run_current_audio_seconds = 0.0
+        self.run_audio_seconds_by_primary_key: dict[str, float] = {}
+        self.run_audio_alias_to_primary_key: dict[str, str] = {}
+        self.run_audio_accounted_primary_keys: set[str] = set()
+
 
 
 
@@ -8200,7 +8212,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_stop_now = QPushButton("즉시 중지")
+        self.btn_stop_now = QPushButton("전사중지")
 
 
 
@@ -12495,6 +12507,15 @@ class TranscribeGUI(QWidget):
 
             self._refresh_file_queue_table()
 
+    def _mark_processing_rows_as_stop(self):
+        updated = False
+        for row in self.file_queue_rows:
+            if row.get("status") == QUEUE_STATUS_PROCESSING:
+                row["status"] = QUEUE_STATUS_STOP
+                updated = True
+        if updated:
+            self._refresh_file_queue_table()
+
 
 
 
@@ -15553,6 +15574,120 @@ class TranscribeGUI(QWidget):
 
         return f"{minutes} 분" if minutes > 0 else ETA_EMPTY_TEXT
 
+    def _format_approx_remaining_minutes(self, seconds: float | int) -> str:
+        sec = max(0, int(round(float(seconds))))
+        minutes = max(1, int(round(sec / 60.0))) if sec > 0 else 0
+        return f"약 {minutes}분" if minutes > 0 else ETA_EMPTY_TEXT
+
+    def _duration_text_to_seconds(self, duration_value) -> float:
+        if isinstance(duration_value, (int, float)):
+            return max(0.0, float(duration_value))
+
+        text = str(duration_value or "").strip()
+        if not text or text == ETA_EMPTY_TEXT:
+            return 0.0
+
+        parts = text.split(":")
+        if len(parts) not in (2, 3):
+            return 0.0
+
+        try:
+            nums = [int(p) for p in parts]
+        except ValueError:
+            return 0.0
+
+        if any(n < 0 for n in nums):
+            return 0.0
+
+        if len(nums) == 2:
+            mm, ss = nums
+            return float(mm * 60 + ss)
+
+        hh, mm, ss = nums
+        return float(hh * 3600 + mm * 60 + ss)
+
+    def _eta_primary_name_key(self, file_name: str) -> str:
+        return os.path.basename(str(file_name or "")).strip().lower()
+
+    def _build_run_duration_estimate_state(self):
+        self.run_total_audio_seconds = 0.0
+        self.run_done_audio_seconds = 0.0
+        self.run_current_audio_seconds = 0.0
+        self.run_audio_seconds_by_primary_key.clear()
+        self.run_audio_alias_to_primary_key.clear()
+        self.run_audio_accounted_primary_keys.clear()
+
+        run_items = self.selected_run_items if self.selected_run_items else self.file_queue_rows
+        for item in run_items:
+            duration_seconds = self._duration_text_to_seconds(item.get("duration_seconds", 0))
+            if duration_seconds <= 0:
+                duration_seconds = self._duration_text_to_seconds(item.get("duration", ""))
+            if duration_seconds <= 0:
+                for ref_name in (
+                    str(item.get("transcribe_name", "")),
+                    str(item.get("queue_name", "")),
+                    str(item.get("filename", "")),
+                    os.path.basename(str(item.get("source_path", ""))),
+                ):
+                    row = self._find_queue_row_by_filename(ref_name)
+                    if not row:
+                        continue
+                    duration_seconds = self._duration_text_to_seconds(row.get("duration", ""))
+                    if duration_seconds > 0:
+                        break
+            if duration_seconds <= 0:
+                continue
+
+            primary_name = (
+                str(item.get("transcribe_name", ""))
+                or str(item.get("filename", ""))
+                or str(item.get("queue_name", ""))
+                or os.path.basename(str(item.get("source_path", "")))
+            )
+            primary_key = self._eta_primary_name_key(primary_name)
+            if not primary_key:
+                continue
+
+            self.run_total_audio_seconds += duration_seconds
+            self.run_audio_seconds_by_primary_key[primary_key] = duration_seconds
+
+            alias_keys = set()
+            for alias_name in (
+                primary_name,
+                str(item.get("queue_name", "")),
+                str(item.get("filename", "")),
+                os.path.basename(str(item.get("source_path", ""))),
+            ):
+                alias_keys.update(self._queue_name_keys(alias_name))
+            alias_keys.add(primary_key)
+
+            for alias_key in alias_keys:
+                if alias_key and alias_key not in self.run_audio_alias_to_primary_key:
+                    self.run_audio_alias_to_primary_key[alias_key] = primary_key
+
+    def _resolve_run_audio_primary_key(self, file_name: str) -> str:
+        for alias_key in self._queue_name_keys(file_name):
+            primary_key = self.run_audio_alias_to_primary_key.get(alias_key, "")
+            if primary_key:
+                return primary_key
+        return ""
+
+    def _lookup_run_audio_seconds(self, file_name: str) -> float:
+        primary_key = self._resolve_run_audio_primary_key(file_name)
+        if not primary_key:
+            return 0.0
+        return float(self.run_audio_seconds_by_primary_key.get(primary_key, 0.0))
+
+    def _consume_run_audio_seconds(self, file_name: str) -> float:
+        primary_key = self._resolve_run_audio_primary_key(file_name)
+        if not primary_key or primary_key in self.run_audio_accounted_primary_keys:
+            return 0.0
+        self.run_audio_accounted_primary_keys.add(primary_key)
+        duration_seconds = float(self.run_audio_seconds_by_primary_key.get(primary_key, 0.0))
+        if duration_seconds > 0:
+            self.run_done_audio_seconds += duration_seconds
+        return duration_seconds
+
 
 
 
@@ -16051,7 +16186,7 @@ class TranscribeGUI(QWidget):
         self.btn_load_files.setText("\uD30C\uC77C \uC120\uD0DD")
 
         self.btn_transcribe_target.setText("\uC804\uC0AC\uC2DC\uC791")
-        self.btn_stop_now.setText("\uC989\uC2DC\uC911\uC9C0")
+        self.btn_stop_now.setText("\uC804\uC0AC\uC911\uC9C0")
         self.btn_move_files.setText("\uD30C\uC77C\uC774\uB3D9")
         self.btn_move_and_transcribe.setText("\uC774\uB3D9\uC804\uC0AC")
 
@@ -16155,6 +16290,14 @@ class TranscribeGUI(QWidget):
         self.last_completed_file_name = ""
         self.current_file_name = ""
         self.current_file_started_at = None
+        self.duration_eta_ratio = DEFAULT_WHISPER_TIME_RATIO
+        self.duration_eta_ratio_calibrated = False
+        self.run_total_audio_seconds = 0.0
+        self.run_done_audio_seconds = 0.0
+        self.run_current_audio_seconds = 0.0
+        self.run_audio_seconds_by_primary_key.clear()
+        self.run_audio_alias_to_primary_key.clear()
+        self.run_audio_accounted_primary_keys.clear()
         self.update_current_file_progress(0, force=True)
         self._set_current_file_text("\uC5C6\uC74C")
         self._set_eta_value(self.label_total_eta, ETA_EMPTY_TEXT)
@@ -16264,12 +16407,16 @@ class TranscribeGUI(QWidget):
 
             row["source_path"] = src
             row["transcribe_name"] = final_name
+            duration_text = str(row.get("duration", ""))
+            duration_seconds = self._duration_text_to_seconds(duration_text)
 
             run_items.append(
                 {
                     "queue_name": str(row.get("filename", final_name)),
                     "transcribe_name": final_name,
                     "source_path": src,
+                    "duration": duration_text,
+                    "duration_seconds": duration_seconds,
                 }
             )
 
@@ -19792,6 +19939,8 @@ class TranscribeGUI(QWidget):
                         "original_filename": str(row.get("original_filename", actual_name)),
                         "source_path": dst,
                         "transcribe_name": os.path.basename(dst),
+                        "duration": str(row.get("duration", "")),
+                        "duration_seconds": self._duration_text_to_seconds(row.get("duration", "")),
                     }
                 )
             except Exception as e:
@@ -20263,6 +20412,9 @@ class TranscribeGUI(QWidget):
 
 
         self.file_duration_history.clear()
+        self.duration_eta_ratio = DEFAULT_WHISPER_TIME_RATIO
+        self.duration_eta_ratio_calibrated = False
+        self._build_run_duration_estimate_state()
 
 
 
@@ -20533,12 +20685,15 @@ class TranscribeGUI(QWidget):
 
 
             self.current_eta_seconds = None
-
-
-
-
-
-            self._set_eta_value(self.label_current_eta, "계산 중...")
+            if self.run_current_audio_seconds <= 0:
+                self.run_current_audio_seconds = self._lookup_run_audio_seconds(self.current_file_name)
+            ratio = float(self.duration_eta_ratio) if self.duration_eta_ratio else DEFAULT_WHISPER_TIME_RATIO
+            ratio = max(0.05, min(5.0, ratio))
+            predicted_seconds = max(0.0, self.run_current_audio_seconds * ratio)
+            if predicted_seconds > 0:
+                self._set_eta_value(self.label_current_eta, self._format_approx_remaining_minutes(predicted_seconds))
+            else:
+                self._set_eta_value(self.label_current_eta, "계산 중...")
 
 
 
@@ -20664,96 +20819,47 @@ class TranscribeGUI(QWidget):
 
 
 
+        if self.run_total_audio_seconds > 0:
+            progress_ratio = max(0.0, min(1.0, self.last_current_percent / 100.0)) if self.current_file_name else 0.0
+            current_audio = max(0.0, self.run_current_audio_seconds if self.current_file_name else 0.0)
+            completed_audio = max(0.0, self.run_done_audio_seconds)
+            waiting_audio = max(0.0, self.run_total_audio_seconds - completed_audio - current_audio)
+            remaining_current_audio = current_audio * (1.0 - progress_ratio)
+
+            ratio = float(self.duration_eta_ratio) if self.duration_eta_ratio else DEFAULT_WHISPER_TIME_RATIO
+            ratio = max(0.05, min(5.0, ratio))
+
+            if self.current_file_name and self.current_eta_seconds is not None:
+                current_est = max(0.0, float(self.current_eta_seconds))
+            else:
+                current_est = remaining_current_audio * ratio
+
+            est = current_est + (waiting_audio * ratio)
+            self.total_eta_seconds = est if self.total_eta_seconds is None else self.total_eta_seconds * 0.7 + est * 0.3
+
+            shown = (
+                self._format_remaining_minutes(self.total_eta_seconds)
+                if self.duration_eta_ratio_calibrated
+                else self._format_approx_remaining_minutes(self.total_eta_seconds)
+            )
+            self._set_eta_value(self.label_total_eta, shown)
+            return
+
         running = 1 if self.current_file_name else 0
-
-
-
-
-
         remain_files = max(0, total - done - running)
-
-
-
-
-
         has_avg = bool(self.file_duration_history)
-
-
-
-
-
         if self.current_file_name and self.current_eta_seconds is None and not has_avg:
-
-
-
-
-
             self._set_eta_value(self.label_total_eta, "계산 중...")
-
-
-
-
-
             self.total_eta_seconds = None
-
-
-
-
-
             return
-
-
-
-
-
         if not self.current_file_name and not has_avg and remain_files > 0:
-
-
-
-
-
             self._set_eta_value(self.label_total_eta, "계산 중...")
-
-
-
-
-
             self.total_eta_seconds = None
-
-
-
-
-
             return
-
-
-
-
-
         avg = statistics.mean(self.file_duration_history) if has_avg else 0.0
-
-
-
-
-
         cur = self.current_eta_seconds or 0.0
-
-
-
-
-
         est = cur + (remain_files * avg)
-
-
-
-
-
         self.total_eta_seconds = est if self.total_eta_seconds is None else self.total_eta_seconds * 0.7 + est * 0.3
-
-
-
-
-
         self._set_eta_value(self.label_total_eta, self._format_remaining_minutes(self.total_eta_seconds))
 
 
@@ -20802,12 +20908,7 @@ class TranscribeGUI(QWidget):
 
 
 
-                self._set_eta_value(self.label_total_eta, "계산 중...")
-
-
-
-
-
+                self.update_total_eta_label()
                 self._set_eta_value(self.label_current_eta, "계산 중...")
 
 
@@ -21559,6 +21660,7 @@ class TranscribeGUI(QWidget):
 
 
             self.current_eta_seconds = None
+            self.run_current_audio_seconds = self._lookup_run_audio_seconds(name)
 
 
 
@@ -21606,12 +21708,6 @@ class TranscribeGUI(QWidget):
 
 
 
-            self._set_eta_value(self.label_current_eta, "계산 중...")
-
-
-
-
-
             self.update_total_eta_label()
 
 
@@ -21650,6 +21746,11 @@ class TranscribeGUI(QWidget):
 
                 self._set_queue_status_by_name(name, QUEUE_STATUS_DONE)
 
+            audio_seconds = self._consume_run_audio_seconds(name)
+            if audio_seconds <= 0 and self.current_file_name:
+                audio_seconds = self._consume_run_audio_seconds(self.current_file_name)
+            self.run_current_audio_seconds = 0.0
+
 
 
 
@@ -21686,6 +21787,14 @@ class TranscribeGUI(QWidget):
 
                         self.file_duration_history.pop(0)
 
+                    if audio_seconds > 0:
+                        observed_ratio = max(0.05, min(5.0, d / audio_seconds))
+                        if self.duration_eta_ratio_calibrated:
+                            self.duration_eta_ratio = self.duration_eta_ratio * 0.7 + observed_ratio * 0.3
+                        else:
+                            self.duration_eta_ratio = observed_ratio
+                            self.duration_eta_ratio_calibrated = True
+
 
 
 
@@ -21697,6 +21806,7 @@ class TranscribeGUI(QWidget):
 
 
             self.current_file_started_at = None
+            self.run_current_audio_seconds = 0.0
 
 
 
@@ -21841,6 +21951,9 @@ class TranscribeGUI(QWidget):
 
 
             self._set_queue_status_by_name(name, QUEUE_STATUS_DONE)
+            self._consume_run_audio_seconds(name)
+            self.run_current_audio_seconds = 0.0
+            self.update_total_eta_label()
 
 
 
@@ -21877,6 +21990,8 @@ class TranscribeGUI(QWidget):
 
 
             self._set_queue_status_by_name(name, QUEUE_STATUS_FAILED)
+            self._consume_run_audio_seconds(name)
+            self.run_current_audio_seconds = 0.0
 
 
 
@@ -21896,6 +22011,8 @@ class TranscribeGUI(QWidget):
 
                 self.append_log_text(f"[GUI] 파일 실패: {name} / {err}\n")
 
+            self.update_total_eta_label()
+
 
 
 
@@ -21907,6 +22024,7 @@ class TranscribeGUI(QWidget):
 
 
             self._set_status_text("중지 요청됨")
+            self._mark_processing_rows_as_stop()
 
 
 
@@ -21919,6 +22037,7 @@ class TranscribeGUI(QWidget):
 
 
             self._set_status_text("\uC0AC\uC6A9\uC790 \uC911\uC9C0\uB428")
+            self._mark_processing_rows_as_stop()
 
 
 
@@ -21937,6 +22056,7 @@ class TranscribeGUI(QWidget):
 
 
             self.current_file_started_at = None
+            self.run_current_audio_seconds = 0.0
 
 
 
@@ -22039,6 +22159,7 @@ class TranscribeGUI(QWidget):
 
 
             self.current_file_started_at = None
+            self.run_current_audio_seconds = 0.0
 
 
 
@@ -22414,6 +22535,7 @@ class TranscribeGUI(QWidget):
 
 
         if self.stop_requested:
+            self._mark_processing_rows_as_stop()
 
 
 
@@ -23158,8 +23280,3 @@ if __name__ == "__main__":
 
 
     sys.exit(app.exec())
-
-
-
-
-
