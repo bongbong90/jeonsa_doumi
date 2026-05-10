@@ -5916,7 +5916,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        settings.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        settings.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
 
 
@@ -5928,7 +5928,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        sbox.setContentsMargins(16, 16, 16, 16)
+        sbox.setContentsMargins(16, 0, 16, 12)
 
 
 
@@ -5958,6 +5958,9 @@ class TranscribeGUI(QWidget):
 
 
 
+        settings_hint_policy = self.label_settings_hint.sizePolicy()
+        settings_hint_policy.setRetainSizeWhenHidden(False)
+        self.label_settings_hint.setSizePolicy(settings_hint_policy)
         self.label_settings_hint.setVisible(False)
 
 
@@ -5970,7 +5973,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        sbox.addSpacing(10)
+        sbox.addSpacing(6)
 
 
 
@@ -6012,7 +6015,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        sbox.addSpacing(6)
+        sbox.addSpacing(4)
 
 
 
@@ -6042,7 +6045,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        sbox.addSpacing(8)
+        sbox.addSpacing(6)
 
 
 
@@ -6108,7 +6111,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
 
 
 
@@ -17367,7 +17370,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        settings_min = max(220, int(self.group_settings.minimumSizeHint().height()))
+        settings_min = max(156, int(self.group_settings.minimumSizeHint().height()) + 8)
 
 
 
