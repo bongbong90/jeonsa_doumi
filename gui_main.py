@@ -13720,6 +13720,18 @@ class TranscribeGUI(QWidget):
 
 
 
+            if self._has_existing_output_triplet(normalized_path):
+
+
+
+
+
+                continue
+
+
+
+
+
             existing_paths.add(source_key)
 
 
@@ -21705,6 +21717,13 @@ class TranscribeGUI(QWidget):
 
 
         return [os.path.join(parent, base + ".txt"), os.path.join(parent, base + ".json"), os.path.join(parent, base + ".srt")]
+
+    def _has_existing_output_triplet(self, mp3_path: str) -> bool:
+        base_path = os.path.splitext(mp3_path)[0]
+        txt_path = base_path + ".txt"
+        json_path = base_path + ".json"
+        srt_path = base_path + ".srt"
+        return all(os.path.exists(path) for path in (txt_path, json_path, srt_path))
 
 
 
