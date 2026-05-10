@@ -17271,6 +17271,12 @@ class TranscribeGUI(QWidget):
                     for chunk_idx, chunk in enumerate(chunk_infos, start=1):
                         if int(request_id) != int(self._colab_run_request_id):
                             return
+                        if self._colab_stop_after_current:
+                            _emit_log(
+                                f"[GUI] 중지 요청 감지: 다음 조각 시작 전 중단 ({event_name}, {chunk_idx}/{chunk_total})\n"
+                            )
+                            stopped = True
+                            break
 
                         chunk_path = str(chunk.get("path", "") or "").strip()
                         chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
@@ -17308,7 +17314,7 @@ class TranscribeGUI(QWidget):
                         _emit_event("FILE_PROGRESS", event_name, chunk_idx, chunk_total)
                         _emit_log(f"[GUI] Colab 조각 완료: {event_name} ({chunk_idx}/{chunk_total})\n")
 
-                        if self._colab_stop_after_current and chunk_idx < chunk_total:
+                        if self._colab_stop_after_current:
                             _emit_log(
                                 f"[GUI] 중지 요청 감지: 현재 조각 완료 후 중단 ({event_name}, {chunk_idx}/{chunk_total})\n"
                             )
