@@ -47,12 +47,16 @@ import subprocess
 
 
 import sys
+import threading
 
 
 
 
 
 import time
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 
 
@@ -64,7 +68,7 @@ import time
 
 
 
-from PySide6.QtCore import QProcess, QSize, QTimer, Qt, QSettings, QPoint
+from PySide6.QtCore import QProcess, QSize, QTimer, Qt, QSettings, QPoint, QObject, Signal
 
 
 
@@ -4924,6 +4928,10 @@ class TrayToastWindow(QWidget):
 
 
 
+class ColabHealthCheckBridge(QObject):
+    finished = Signal(int, str)
+
+
 class TranscribeGUI(QWidget):
 
 
@@ -5201,6 +5209,11 @@ class TranscribeGUI(QWidget):
         self.folder_preview_path = ""
         self.transcription_engine = "local"
         self.colab_url = ""
+        self._colab_check_in_progress = False
+        self._colab_check_connected = False
+        self._colab_check_request_id = 0
+        self._colab_health_check_bridge = ColabHealthCheckBridge()
+        self._colab_health_check_bridge.finished.connect(self._on_colab_health_check_finished)
 
 
 
@@ -8141,7 +8154,9 @@ class TranscribeGUI(QWidget):
         colab_row.addWidget(self.input_colab_url, 1)
 
         self.btn_colab_check = QPushButton("연결 확인")
+        self.btn_colab_check.setObjectName("ColabCheckButton")
         self.btn_colab_check.setProperty("uiRole", "controlOutline")
+        self.btn_colab_check.setProperty("connected", False)
         self.btn_colab_check.setFixedHeight(32)
         self.btn_colab_check.setFixedWidth(92)
         colab_row.addWidget(self.btn_colab_check, 0)
@@ -10959,6 +10974,19 @@ class TranscribeGUI(QWidget):
                 font-size: 12px;
                 font-weight: 600;
                 letter-spacing: 0.2px;
+            }
+
+            QPushButton#ColabCheckButton[connected="true"] {
+                border: 1px solid #16a34a;
+                background: #dcfce7;
+                color: #166534;
+                font-weight: 600;
+            }
+
+            QPushButton#ColabCheckButton[connected="true"]:hover {
+                border: 1px solid #15803d;
+                background: #bbf7d0;
+                color: #14532d;
             }
 
 
@@ -16723,15 +16751,98 @@ class TranscribeGUI(QWidget):
         is_colab = self._current_transcription_engine() == "colab"
         self.colab_url_panel.setVisible(is_colab)
         self.input_colab_url.setEnabled(is_colab)
-        self.btn_colab_check.setEnabled(is_colab)
+        self._update_colab_check_button_state()
 
     def _on_transcription_engine_changed(self, _index: int = -1):
         self.transcription_engine = self._current_transcription_engine()
         self._sync_transcription_engine_ui_state()
         self.save_ui_preferences()
 
+    def _refresh_widget_style(self, widget):
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+        widget.update()
+
+    def _set_colab_check_button_connected_style(self, connected: bool):
+        current_value = bool(self.btn_colab_check.property("connected"))
+        target_value = bool(connected)
+        if current_value == target_value:
+            return
+        self.btn_colab_check.setProperty("connected", target_value)
+        self._refresh_widget_style(self.btn_colab_check)
+
+    def _update_colab_check_button_state(self):
+        is_colab = self._current_transcription_engine() == "colab"
+        if self._colab_check_in_progress:
+            self._set_colab_check_button_connected_style(False)
+            self.btn_colab_check.setText("확인 중...")
+            self.btn_colab_check.setEnabled(False)
+            return
+        if self._colab_check_connected:
+            self._set_colab_check_button_connected_style(True)
+            self.btn_colab_check.setText("연결됨 ✓")
+            self.btn_colab_check.setEnabled(is_colab)
+            return
+        self._set_colab_check_button_connected_style(False)
+        self.btn_colab_check.setText("연결 확인")
+        self.btn_colab_check.setEnabled(is_colab)
+
+    def _build_colab_health_url(self, raw_url: str) -> str:
+        candidate = str(raw_url or "").strip()
+        if not candidate:
+            return ""
+        if not re.match(r"^[a-zA-Z][a-zA-Z0-9+.-]*://", candidate):
+            candidate = f"https://{candidate}"
+        try:
+            parsed = urllib_parse.urlsplit(candidate)
+        except Exception:
+            return ""
+        if not parsed.scheme or not parsed.netloc:
+            return ""
+
+        path = parsed.path.rstrip("/")
+        if path.endswith("/health"):
+            health_path = path
+        elif path:
+            health_path = f"{path}/health"
+        else:
+            health_path = "/health"
+
+        normalized = parsed._replace(path=health_path, query="", fragment="")
+        return normalized.geturl()
+
+    def _perform_colab_health_check(self, request_id: int, health_url: str):
+        result_code = "connection_error"
+        try:
+            req = urllib_request.Request(
+                health_url,
+                headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+                method="GET",
+            )
+            with urllib_request.urlopen(req, timeout=10) as response:
+                payload_bytes = response.read()
+                charset = response.headers.get_content_charset() or "utf-8"
+            try:
+                payload = json.loads(payload_bytes.decode(charset, errors="replace"))
+            except json.JSONDecodeError:
+                payload = None
+            if isinstance(payload, dict) and str(payload.get("status", "")).strip().lower() == "ok":
+                result_code = "success"
+            else:
+                result_code = "invalid_response"
+        except urllib_error.HTTPError:
+            result_code = "invalid_response"
+        except (TimeoutError, urllib_error.URLError, OSError, ValueError):
+            result_code = "connection_error"
+        except Exception:
+            result_code = "connection_error"
+        self._colab_health_check_bridge.finished.emit(int(request_id), str(result_code))
+
     def _on_colab_url_text_changed(self, text: str):
         self.colab_url = str(text or "").strip()
+        if self._colab_check_connected:
+            self._colab_check_connected = False
+            self._update_colab_check_button_state()
         self.save_ui_preferences()
 
     def _handle_colab_connection_check(self):
@@ -16739,7 +16850,42 @@ class TranscribeGUI(QWidget):
         if not colab_url:
             self.show_info_message("알림", "Colab URL을 입력해 주세요.")
             return
-        self.show_info_message("알림", "Colab 연결 확인 기능은 다음 단계에서 구현됩니다.")
+        health_url = self._build_colab_health_url(colab_url)
+        if not health_url:
+            self.show_info_message("알림", "Colab 서버에 연결할 수 없습니다. URL을 확인해 주세요.")
+            return
+        if self._colab_check_in_progress:
+            return
+
+        self._colab_check_in_progress = True
+        self._colab_check_connected = False
+        self._colab_check_request_id += 1
+        request_id = self._colab_check_request_id
+        self._update_colab_check_button_state()
+
+        worker = threading.Thread(
+            target=self._perform_colab_health_check,
+            args=(request_id, health_url),
+            daemon=True,
+        )
+        worker.start()
+
+    def _on_colab_health_check_finished(self, request_id: int, result_code: str):
+        if int(request_id) != int(self._colab_check_request_id):
+            return
+        self._colab_check_in_progress = False
+        if result_code == "success":
+            self._colab_check_connected = True
+            self._update_colab_check_button_state()
+            self.show_info_message("알림", "Colab 연결 성공")
+            return
+
+        self._colab_check_connected = False
+        self._update_colab_check_button_state()
+        if result_code == "invalid_response":
+            self.show_info_message("알림", "Colab 서버 응답이 올바르지 않습니다.")
+            return
+        self.show_info_message("알림", "Colab 서버에 연결할 수 없습니다. URL을 확인해 주세요.")
 
     def load_ui_preferences(self):
         try:
