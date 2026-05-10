@@ -7732,7 +7732,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_clear_done = QPushButton("Clear Done")
+        self.btn_clear_done = QPushButton("완료정리")
 
 
 
