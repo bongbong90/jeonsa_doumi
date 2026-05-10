@@ -42,6 +42,8 @@ import statistics
 
 
 import subprocess
+import tempfile
+import traceback
 
 
 
@@ -385,6 +387,7 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 
 ETA_EMPTY_TEXT = "-"
 DEFAULT_WHISPER_TIME_RATIO = 0.5
+COLAB_CHUNK_SECONDS = 600
 
 
 
@@ -16902,8 +16905,17 @@ class TranscribeGUI(QWidget):
                 targets.append({"runtime_mp3": runtime_mp3, "event_name": name})
         return targets
 
+    def _colab_safe_seconds(self, value, default: float = 0.0) -> float:
+        try:
+            seconds = float(value)
+        except (TypeError, ValueError):
+            return float(default)
+        if seconds != seconds:
+            return float(default)
+        return max(0.0, seconds)
+
     def _colab_format_timestamp(self, seconds: float) -> str:
-        safe_seconds = max(0.0, float(seconds or 0.0))
+        safe_seconds = self._colab_safe_seconds(seconds, default=0.0)
         millis = int(round(safe_seconds * 1000))
         hours = millis // 3600000
         millis %= 3600000
@@ -16923,8 +16935,10 @@ class TranscribeGUI(QWidget):
                 text = str(seg.get("text", "") or "").strip()
                 if not text:
                     continue
-                start = float(seg.get("start", 0.0) or 0.0)
-                end = float(seg.get("end", 0.0) or 0.0)
+                start = self._colab_safe_seconds(seg.get("start", 0.0), default=0.0)
+                end = self._colab_safe_seconds(seg.get("end", 0.0), default=start)
+                if end < start:
+                    end = start
                 f.write(f"{index}\n")
                 f.write(f"{self._colab_format_timestamp(start)} --> {self._colab_format_timestamp(end)}\n")
                 f.write(text + "\n\n")
@@ -16932,11 +16946,29 @@ class TranscribeGUI(QWidget):
 
     def _save_colab_result_files(self, audio_path: str, result: dict):
         txt_path, json_path, srt_path = self._output_triplet(audio_path)
-        with open(txt_path, "w", encoding="utf-8") as f:
-            f.write(str(result.get("text", "") or "").strip() + "\n")
-        with open(json_path, "w", encoding="utf-8") as f:
-            json.dump(result, f, ensure_ascii=False, indent=2)
-        self._write_colab_srt(result, srt_path)
+        for output_path in (txt_path, json_path, srt_path):
+            parent = os.path.dirname(output_path)
+            if parent and not os.path.isdir(parent):
+                os.makedirs(parent, exist_ok=True)
+
+        try:
+            with open(txt_path, "w", encoding="utf-8") as f:
+                f.write(str(result.get("text", "") or "").strip() + "\n")
+        except Exception as exc:
+            raise OSError(f"TXT 저장 실패: {txt_path} ({type(exc).__name__}: {exc})") from exc
+
+        try:
+            with open(json_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, ensure_ascii=False, indent=2)
+        except Exception as exc:
+            raise OSError(f"JSON 저장 실패: {json_path} ({type(exc).__name__}: {exc})") from exc
+
+        try:
+            self._write_colab_srt(result, srt_path)
+        except Exception as exc:
+            raise OSError(f"SRT 저장 실패: {srt_path} ({type(exc).__name__}: {exc})") from exc
+
+        return txt_path, json_path, srt_path
 
     def _encode_colab_multipart_file(self, file_path: str) -> tuple[bytes, str]:
         boundary = f"----TranscribeHelperBoundary{uuid.uuid4().hex}"
@@ -16966,6 +16998,79 @@ class TranscribeGUI(QWidget):
         content_type = f"multipart/form-data; boundary={boundary}"
         return bytes(body), content_type
 
+    def _get_ffmpeg_executable(self) -> str:
+        ffmpeg_path = shutil.which("ffmpeg")
+        if ffmpeg_path:
+            return ffmpeg_path
+        raise RuntimeError(
+            "ffmpeg를 찾을 수 없습니다. Colab 분할 전송을 위해 ffmpeg 설치 후 PATH에 등록해 주세요."
+        )
+
+    def _split_mp3_for_colab_chunks(
+        self, source_mp3: str, chunk_seconds: int = COLAB_CHUNK_SECONDS
+    ) -> tuple[list[dict], str]:
+        if not source_mp3 or not os.path.isfile(source_mp3):
+            raise FileNotFoundError(f"분할 대상 파일이 없습니다: {source_mp3}")
+
+        ffmpeg_path = self._get_ffmpeg_executable()
+        parent_dir = os.path.dirname(source_mp3) or os.getcwd()
+        chunk_dir = tempfile.mkdtemp(prefix="colab_chunks_", dir=parent_dir)
+        chunk_pattern = os.path.join(chunk_dir, "chunk_%04d.mp3")
+
+        cmd = [
+            ffmpeg_path,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-y",
+            "-i",
+            source_mp3,
+            "-f",
+            "segment",
+            "-segment_time",
+            str(max(60, int(chunk_seconds))),
+            "-c",
+            "copy",
+            "-reset_timestamps",
+            "1",
+            chunk_pattern,
+        ]
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        if proc.returncode != 0:
+            err = (proc.stderr or proc.stdout or "").strip()
+            raise RuntimeError(f"MP3 분할 실패(ffmpeg): {err or 'unknown error'}")
+
+        chunk_names = sorted(
+            [
+                name
+                for name in os.listdir(chunk_dir)
+                if name.lower().endswith(".mp3") and name.lower().startswith("chunk_")
+            ]
+        )
+        if not chunk_names:
+            raise RuntimeError("MP3 분할 실패: 생성된 조각 파일이 없습니다.")
+
+        chunk_infos: list[dict] = []
+        offset_seconds = 0.0
+        for idx, name in enumerate(chunk_names):
+            chunk_path = os.path.join(chunk_dir, name)
+            duration_text = self._detect_duration_mmss(chunk_path)
+            duration_seconds = self._duration_text_to_seconds(duration_text)
+            if duration_seconds <= 0:
+                duration_seconds = float(max(60, int(chunk_seconds)))
+
+            chunk_infos.append(
+                {
+                    "path": chunk_path,
+                    "offset": float(offset_seconds),
+                    "duration": float(duration_seconds),
+                    "index": idx + 1,
+                }
+            )
+            offset_seconds += max(0.0, float(duration_seconds))
+
+        return chunk_infos, chunk_dir
+
     def _post_colab_transcribe(self, transcribe_url: str, file_path: str) -> dict:
         body, content_type = self._encode_colab_multipart_file(file_path)
         req = urllib_request.Request(
@@ -16978,7 +17083,7 @@ class TranscribeGUI(QWidget):
             },
             method="POST",
         )
-        with urllib_request.urlopen(req, timeout=600) as response:
+        with urllib_request.urlopen(req, timeout=1800) as response:
             payload_bytes = response.read()
             charset = response.headers.get_content_charset() or "utf-8"
 
@@ -17003,11 +17108,18 @@ class TranscribeGUI(QWidget):
             if not isinstance(seg, dict):
                 continue
             seg_text = str(seg.get("text", "") or "").strip()
-            start = float(seg.get("start", 0.0) or 0.0)
-            end = float(seg.get("end", 0.0) or 0.0)
+            start = self._colab_safe_seconds(seg.get("start", 0.0), default=0.0)
+            end = self._colab_safe_seconds(seg.get("end", 0.0), default=start)
+            if end < start:
+                end = start
+            seg_id = seg.get("id", idx)
+            try:
+                seg_id = int(seg_id)
+            except (TypeError, ValueError):
+                seg_id = idx
             normalized_segments.append(
                 {
-                    "id": int(seg.get("id", idx) or idx),
+                    "id": seg_id,
                     "start": max(0.0, start),
                     "end": max(0.0, end),
                     "text": seg_text,
@@ -17032,6 +17144,17 @@ class TranscribeGUI(QWidget):
 
         if not transcribe_url:
             self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
+            self.set_transcribe_buttons_enabled(True)
+            self._sync_selected_runtime_outputs()
+            self.selected_run_items = []
+            return False
+
+        try:
+            _ffmpeg_path = self._get_ffmpeg_executable()
+            self.append_log_text(f"[GUI] ffmpeg 확인 완료: {_ffmpeg_path}\n")
+        except Exception as exc:
+            self.append_log_text(f"[GUI] Colab 분할 전송 준비 실패: {exc}\n", force=True)
+            self.show_warning_message("경고", str(exc))
             self.set_transcribe_buttons_enabled(True)
             self._sync_selected_runtime_outputs()
             self.selected_run_items = []
@@ -17101,31 +17224,144 @@ class TranscribeGUI(QWidget):
                 runtime_mp3 = str(target.get("runtime_mp3", "") or "").strip()
                 event_name = _safe_token(target.get("event_name", os.path.basename(runtime_mp3)))
                 if not runtime_mp3 or not os.path.isfile(runtime_mp3):
-                    _emit_event("FILE_FAIL", event_name, "파일을 찾을 수 없습니다.")
+                    _emit_event("FILE_FAIL", event_name, "??? ?? ? ????.")
+                    _emit_log(f"[GUI] Colab ?? ?? ??: ??={event_name}, ??=?? ??, ??={runtime_mp3}\n")
                     if self._colab_stop_after_current:
                         stopped = True
                         break
                     continue
 
                 _emit_event("FILE_INDEX", idx, total, event_name)
+                stage = "?? ??"
+                chunk_dir = ""
                 try:
-                    result = self._post_colab_transcribe(transcribe_url, runtime_mp3)
-                    _emit_comm_time()
-                    self._save_colab_result_files(runtime_mp3, result)
+                    try:
+                        file_size = os.path.getsize(runtime_mp3)
+                    except OSError:
+                        file_size = 0
+                    _emit_log(f"[GUI] Colab ?? ??: {event_name} ({file_size} bytes)\n")
+
+                    stage = "MP3 ??"
+                    chunk_infos, chunk_dir = self._split_mp3_for_colab_chunks(
+                        runtime_mp3, chunk_seconds=COLAB_CHUNK_SECONDS
+                    )
+                    chunk_total = len(chunk_infos)
+                    if chunk_total <= 0:
+                        raise RuntimeError("?? ??? ???? ?????.")
+                    _emit_log(
+                        f"[GUI] MP3 ?? ??: {event_name} / ?? {chunk_total}? (?? {int(COLAB_CHUNK_SECONDS)}?)\n"
+                    )
+
+                    merged_segments: list[dict] = []
+                    merged_text_parts: list[str] = []
+                    merged_language = ""
+
+                    for chunk_idx, chunk in enumerate(chunk_infos, start=1):
+                        if int(request_id) != int(self._colab_run_request_id):
+                            return
+
+                        chunk_path = str(chunk.get("path", "") or "").strip()
+                        chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
+                        stage = f"?? ?? {chunk_idx}/{chunk_total}"
+
+                        chunk_result = self._post_colab_transcribe(transcribe_url, chunk_path)
+                        _emit_comm_time()
+
+                        if not merged_language:
+                            merged_language = str(chunk_result.get("language", "") or "").strip() or "ko"
+
+                        chunk_text = str(chunk_result.get("text", "") or "").strip()
+                        if chunk_text:
+                            merged_text_parts.append(chunk_text)
+
+                        for seg in (chunk_result.get("segments", []) or []):
+                            if not isinstance(seg, dict):
+                                continue
+                            seg_text = str(seg.get("text", "") or "").strip()
+                            if not seg_text:
+                                continue
+                            seg_start = self._colab_safe_seconds(seg.get("start", 0.0), default=0.0) + chunk_offset
+                            seg_end = self._colab_safe_seconds(seg.get("end", 0.0), default=seg_start) + chunk_offset
+                            if seg_end < seg_start:
+                                seg_end = seg_start
+                            merged_segments.append(
+                                {
+                                    "id": len(merged_segments),
+                                    "start": seg_start,
+                                    "end": seg_end,
+                                    "text": seg_text,
+                                }
+                            )
+
+                        _emit_event("FILE_PROGRESS", event_name, chunk_idx, chunk_total)
+                        _emit_log(f"[GUI] Colab ?? ??: {event_name} ({chunk_idx}/{chunk_total})\n")
+
+                        if self._colab_stop_after_current and chunk_idx < chunk_total:
+                            _emit_log(
+                                f"[GUI] ?? ?? ??: ?? ?? ?? ? ?? ({event_name}, {chunk_idx}/{chunk_total})\n"
+                            )
+                            stopped = True
+                            break
+
+                    if stopped:
+                        break
+
+                    stage = "?? ??"
+                    merged_result = {
+                        "text": " ".join(merged_text_parts).strip(),
+                        "segments": merged_segments,
+                        "language": merged_language or "ko",
+                    }
+
+                    stage = "?? ?? ??"
+                    txt_path, json_path, srt_path = self._save_colab_result_files(runtime_mp3, merged_result)
+                    _emit_log(f"[GUI] Colab ?? ?? ??: {event_name}\n")
+                    _emit_log(f"[GUI] ?? ??: TXT={txt_path}\n")
+                    _emit_log(f"[GUI] ?? ??: JSON={json_path}\n")
+                    _emit_log(f"[GUI] ?? ??: SRT={srt_path}\n")
                     _emit_event("FILE_DONE", event_name)
-                    _emit_log(f"[GUI] Colab 전사 완료: {event_name}\n")
+                    _emit_log(f"[GUI] Colab ?? ??: {event_name}\n")
                 except urllib_error.HTTPError as exc:
                     err_text = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
-                    _emit_event("FILE_FAIL", event_name, err_text or "HTTP 오류")
-                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+                    _emit_event("FILE_FAIL", event_name, err_text or "HTTP ??")
+                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    try:
+                        body_bytes = exc.read()
+                        body_text = body_bytes.decode("utf-8", errors="replace").strip() if body_bytes else ""
+                    except Exception:
+                        body_text = ""
+                    if body_text:
+                        _emit_log(f"[GUI] Colab HTTP ?? ??: {body_text[:400]}\n")
+                    _emit_log(
+                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={err_text}\n"
+                    )
+                    _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
                 except (TimeoutError, urllib_error.URLError, OSError, ValueError, RuntimeError) as exc:
-                    err_text = _safe_token(str(exc) or "요청 실패")
+                    raw_error = str(exc) or "?? ??"
+                    err_text = _safe_token(raw_error)
                     _emit_event("FILE_FAIL", event_name, err_text)
-                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    _emit_log(
+                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={raw_error}\n"
+                    )
+                    _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
                 except Exception as exc:
-                    err_text = _safe_token(str(exc) or "알 수 없는 오류")
+                    raw_error = str(exc) or "? ? ?? ??"
+                    err_text = _safe_token(raw_error)
                     _emit_event("FILE_FAIL", event_name, err_text)
-                    _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
+                    _emit_log(f"[GUI] Colab ?? ??: {event_name} / {err_text}\n")
+                    _emit_log(
+                        f"[GUI] Colab ?? ?? ??: ??={event_name}, ??={stage}, ??={type(exc).__name__}, ???={raw_error}\n"
+                    )
+                    _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
+                finally:
+                    if chunk_dir and os.path.isdir(chunk_dir):
+                        try:
+                            shutil.rmtree(chunk_dir, ignore_errors=True)
+                        except Exception as cleanup_exc:
+                            _emit_log(
+                                f"[GUI] Colab ?? ?? ?? ?? ??: {chunk_dir} ({type(cleanup_exc).__name__}: {cleanup_exc})\n"
+                            )
 
                 if self._colab_stop_after_current:
                     stopped = True
@@ -17139,6 +17375,10 @@ class TranscribeGUI(QWidget):
             _emit_event("ALL_DONE")
             self._colab_run_bridge.finished.emit(int(request_id), "done", "")
         except Exception as exc:
+            _emit_log(
+                f"[GUI] Colab ?? ?? ??: ??=?? ??, ??={type(exc).__name__}, ???={str(exc)}\n"
+            )
+            _emit_log(f"[GUI] Colab ?? traceback:\n{traceback.format_exc()}\n")
             self._colab_run_bridge.finished.emit(int(request_id), "error", str(exc))
 
     def _on_colab_transcribe_event_line(self, line: str):
@@ -17153,7 +17393,12 @@ class TranscribeGUI(QWidget):
         message = str(text)
         if not message.endswith("\n"):
             message += "\n"
-        self.append_log_text(message)
+        stripped = message.strip()
+        if stripped.startswith("[GUI] "):
+            display = stripped[len("[GUI] "):] + "\n"
+        else:
+            display = message
+        self.append_log_text(display, force=True)
 
     def _on_colab_transcribe_finished(self, request_id: int, outcome: str, detail: str):
         if int(request_id) != int(self._colab_run_request_id):
@@ -23104,6 +23349,66 @@ class TranscribeGUI(QWidget):
 
 
 
+        elif evt == "FILE_PROGRESS":
+
+
+
+
+
+            name = payload[0] if payload else self.current_file_name
+
+
+
+
+
+            done_chunks = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
+
+
+
+
+
+            total_chunks = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else 0
+
+
+
+
+
+            if name:
+
+
+
+
+
+                self._set_current_file_text(name)
+
+
+
+
+
+            if total_chunks > 0:
+
+
+
+
+
+                percent = max(0, min(100, int(round(done_chunks * 100.0 / total_chunks))))
+
+
+
+
+
+                self.update_current_file_progress(percent, force=True)
+
+
+
+
+
+                self.update_total_eta_label()
+
+
+
+
+
         elif evt == "FILE_DONE":
 
 
@@ -23410,7 +23715,7 @@ class TranscribeGUI(QWidget):
 
 
 
-                self.append_log_text(f"[GUI] 파일 실패: {name} / {err}\n")
+                self.append_log_text(f"전사 실패 원인: {err}\n", force=True)
 
             self.update_total_eta_label()
 
