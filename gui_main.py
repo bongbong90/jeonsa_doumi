@@ -7996,6 +7996,10 @@ class TranscribeGUI(QWidget):
 
 
         self.file_queue_table.setFocusPolicy(Qt.NoFocus)
+        self.file_queue_table.setContextMenuPolicy(Qt.NoContextMenu)
+        self.file_queue_table.viewport().setContextMenuPolicy(Qt.NoContextMenu)
+        self.file_queue_table.horizontalHeader().setContextMenuPolicy(Qt.NoContextMenu)
+        self.file_queue_table.verticalHeader().setContextMenuPolicy(Qt.NoContextMenu)
 
 
 
@@ -13173,6 +13177,11 @@ class TranscribeGUI(QWidget):
 
 
         self.file_queue_table.editItem(item)
+        QTimer.singleShot(0, self._disable_filename_editor_context_menu)
+
+    def _disable_filename_editor_context_menu(self):
+        for editor in self.file_queue_table.findChildren(QLineEdit):
+            editor.setContextMenuPolicy(Qt.NoContextMenu)
 
 
 
@@ -17441,7 +17450,7 @@ class TranscribeGUI(QWidget):
 
 
     def open_colab_notebook(self):
-        url = "https://github.com/bongbong90/jeonsa_doumi/blob/main/colab_transcribe.ipynb"
+        url = "https://colab.research.google.com/github/bongbong90/jeonsa_doumi/blob/main/colab_transcribe.ipynb"
         webbrowser.open(url)
 
     def update_colab_last_comm(self, timestamp_str):
@@ -21075,17 +21084,19 @@ class TranscribeGUI(QWidget):
 
 
         if self._is_transcribe_running():
-
-
-
-
-
-            if QMessageBox.question(self, "종료 확인", "전사가 진행 중입니다. 그래도 종료하시겠습니까?") != QMessageBox.Yes:
-
-
-
-
-
+            dialog, button_box = self._build_message_box(
+                "\uC885\uB8CC \uD655\uC778",
+                "\uC804\uC0AC\uAC00 \uC9C4\uD589 \uC911\uC785\uB2C8\uB2E4. \uADF8\uB798\uB3C4 \uC885\uB8CC\uD558\uC2DC\uACA0\uC2B5\uB2C8\uAE4C?",
+                QMessageBox.Question,
+                parent_override=self,
+            )
+            quit_btn = button_box.addButton("\uC885\uB8CC", QDialogButtonBox.AcceptRole)
+            quit_btn.setObjectName("DialogPrimaryButton")
+            cancel_btn = button_box.addButton("\uCDE8\uC18C", QDialogButtonBox.RejectRole)
+            cancel_btn.setObjectName("DialogSecondaryButton")
+            quit_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
+            if dialog.exec() != QDialog.Accepted:
                 return
 
 
