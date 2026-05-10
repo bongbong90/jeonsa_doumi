@@ -421,6 +421,13 @@ SETTINGS_KEY_SHUTDOWN_AFTER_DONE = "ui/shutdown_after_done"
 
 SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS = "ui/shutdown_wait_seconds"
 
+SETTINGS_KEY_DASH_TOTAL_DONE_FILES = "dashboard/total_done_files"
+SETTINGS_KEY_DASH_TOTAL_AUDIO_SECONDS = "dashboard/total_audio_seconds"
+SETTINGS_KEY_DASH_DAILY_COUNTS_JSON = "dashboard/daily_counts_json"
+SETTINGS_KEY_DASH_RECENT_DONE_JSON = "dashboard/recent_done_json"
+SETTINGS_KEY_DASH_OBSERVED_AUDIO_SECONDS = "dashboard/observed_audio_seconds"
+SETTINGS_KEY_DASH_OBSERVED_PROCESSING_SECONDS = "dashboard/observed_processing_seconds"
+
 
 
 
@@ -5169,6 +5176,12 @@ class TranscribeGUI(QWidget):
 
 
         self.ui_settings = QSettings(get_ui_settings_path(), QSettings.IniFormat)
+        self.dashboard_total_done_files = 0
+        self.dashboard_total_audio_seconds = 0.0
+        self.dashboard_daily_done_counts: dict[str, int] = {}
+        self.dashboard_recent_done_items: list[dict] = []
+        self.dashboard_observed_audio_seconds = 0.0
+        self.dashboard_observed_processing_seconds = 0.0
 
 
 
@@ -5267,6 +5280,8 @@ class TranscribeGUI(QWidget):
 
 
         self.load_ui_preferences()
+        self.load_dashboard_statistics()
+        self.refresh_dashboard_view()
 
 
 
@@ -8333,42 +8348,91 @@ class TranscribeGUI(QWidget):
 
 
         dash_layout.setContentsMargins(0, 0, 0, 0)
+        dash_layout.setSpacing(10)
 
+        dash_cards = QFrame()
+        dash_cards.setObjectName("DashboardTopCards")
+        dash_cards_grid = QGridLayout(dash_cards)
+        dash_cards_grid.setContentsMargins(0, 0, 0, 0)
+        dash_cards_grid.setHorizontalSpacing(10)
+        dash_cards_grid.setVerticalSpacing(10)
 
+        self.card_dash_total_done = QFrame()
+        self.card_dash_total_done.setObjectName("DashboardCard")
+        card_total_done_box = QVBoxLayout(self.card_dash_total_done)
+        card_total_done_box.setContentsMargins(14, 12, 14, 12)
+        card_total_done_box.setSpacing(6)
+        card_total_done_box.addWidget(QLabel("TOTAL DONE FILES", objectName="DashboardMicroLabel"))
+        self.label_dash_total_done = QLabel("0")
+        self.label_dash_total_done.setObjectName("MetricValue")
+        self.label_dash_total_done.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        card_total_done_box.addWidget(self.label_dash_total_done, 1)
+        dash_cards_grid.addWidget(self.card_dash_total_done, 0, 0)
 
+        self.card_dash_total_audio = QFrame()
+        self.card_dash_total_audio.setObjectName("DashboardCard")
+        card_total_audio_box = QVBoxLayout(self.card_dash_total_audio)
+        card_total_audio_box.setContentsMargins(14, 12, 14, 12)
+        card_total_audio_box.setSpacing(6)
+        card_total_audio_box.addWidget(QLabel("TOTAL AUDIO TIME", objectName="DashboardMicroLabel"))
+        self.label_dash_total_audio = QLabel("0분")
+        self.label_dash_total_audio.setObjectName("MetricValue")
+        self.label_dash_total_audio.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        card_total_audio_box.addWidget(self.label_dash_total_audio, 1)
+        dash_cards_grid.addWidget(self.card_dash_total_audio, 0, 1)
 
+        self.card_dash_today_done = QFrame()
+        self.card_dash_today_done.setObjectName("DashboardCard")
+        card_today_done_box = QVBoxLayout(self.card_dash_today_done)
+        card_today_done_box.setContentsMargins(14, 12, 14, 12)
+        card_today_done_box.setSpacing(6)
+        card_today_done_box.addWidget(QLabel("DONE TODAY", objectName="DashboardMicroLabel"))
+        self.label_dash_today_done = QLabel("0")
+        self.label_dash_today_done.setObjectName("MetricValue")
+        self.label_dash_today_done.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        card_today_done_box.addWidget(self.label_dash_today_done, 1)
+        dash_cards_grid.addWidget(self.card_dash_today_done, 1, 0)
 
-        dash_placeholder = QFrame()
+        self.card_dash_speed = QFrame()
+        self.card_dash_speed.setObjectName("DashboardCard")
+        card_speed_box = QVBoxLayout(self.card_dash_speed)
+        card_speed_box.setContentsMargins(14, 12, 14, 12)
+        card_speed_box.setSpacing(6)
+        card_speed_box.addWidget(QLabel("AVG TRANSCRIBE SPEED", objectName="DashboardMicroLabel"))
+        self.label_dash_speed = QLabel("오디오 1분 -> 약 -")
+        self.label_dash_speed.setObjectName("DashboardSpeedValue")
+        self.label_dash_speed.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self.label_dash_speed.setWordWrap(True)
+        card_speed_box.addWidget(self.label_dash_speed, 1)
+        dash_cards_grid.addWidget(self.card_dash_speed, 1, 1)
 
+        dash_layout.addWidget(dash_cards, 0)
 
+        self.dashboard_recent_card = QFrame()
+        self.dashboard_recent_card.setObjectName("DashboardCard")
+        recent_box = QVBoxLayout(self.dashboard_recent_card)
+        recent_box.setContentsMargins(14, 12, 14, 12)
+        recent_box.setSpacing(8)
+        recent_box.addWidget(QLabel("RECENT COMPLETIONS", objectName="DashboardMicroLabel"))
 
+        self.dashboard_recent_table = QTableWidget(0, 2)
+        self.dashboard_recent_table.setObjectName("DashboardRecentTable")
+        self.dashboard_recent_table.setHorizontalHeaderLabels(["파일명", "완료 시각"])
+        self.dashboard_recent_table.verticalHeader().setVisible(False)
+        self.dashboard_recent_table.horizontalHeader().setStretchLastSection(False)
+        self.dashboard_recent_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
+        self.dashboard_recent_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Fixed)
+        self.dashboard_recent_table.setColumnWidth(1, 170)
+        self.dashboard_recent_table.setSelectionMode(QAbstractItemView.NoSelection)
+        self.dashboard_recent_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.dashboard_recent_table.setShowGrid(False)
+        self.dashboard_recent_table.setFocusPolicy(Qt.NoFocus)
+        self.dashboard_recent_table.setAlternatingRowColors(False)
+        self.dashboard_recent_table.setWordWrap(False)
+        self.dashboard_recent_table.setTextElideMode(Qt.ElideRight)
+        recent_box.addWidget(self.dashboard_recent_table, 1)
 
-
-        dash_placeholder.setObjectName("PlaceholderCard")
-
-
-
-
-
-        dash_box = QVBoxLayout(dash_placeholder)
-
-
-
-
-
-        dash_box.setContentsMargins(20, 20, 20, 20)
-
-
-
-
-
-        dash_box.addWidget(QLabel("Dashboard 탭은 향후 확장 영역입니다.", objectName="PlaceholderText"))
-
-
-
-
-
-        dash_layout.addWidget(dash_placeholder)
+        dash_layout.addWidget(self.dashboard_recent_card, 1)
 
 
 
@@ -9748,6 +9812,12 @@ class TranscribeGUI(QWidget):
 
 
 
+            QLabel#DashboardSpeedValue {
+                color: #1e3a8a;
+                font-size: 18px;
+                font-weight: 700;
+            }
+
             QLabel#CurrentProgressValue {
 
 
@@ -10066,7 +10136,8 @@ class TranscribeGUI(QWidget):
 
 
 
-            QTableWidget#FileQueueTable {
+            QTableWidget#FileQueueTable,
+            QTableWidget#DashboardRecentTable {
 
 
 
@@ -10121,18 +10192,11 @@ class TranscribeGUI(QWidget):
 
 
             QTableWidget#FileQueueTable::item,
-
-
-
-
-
             QTableWidget#FileQueueTable::item:selected,
-
-
-
-
-
-            QTableWidget#FileQueueTable::item:focus {
+            QTableWidget#FileQueueTable::item:focus,
+            QTableWidget#DashboardRecentTable::item,
+            QTableWidget#DashboardRecentTable::item:selected,
+            QTableWidget#DashboardRecentTable::item:focus {
 
 
 
@@ -10907,6 +10971,8 @@ class TranscribeGUI(QWidget):
 
 
         self.main_stack.setCurrentIndex(mapping[tab_name])
+        if tab_name == "dashboard":
+            self.refresh_dashboard_view()
 
 
 
@@ -15688,6 +15754,233 @@ class TranscribeGUI(QWidget):
             self.run_done_audio_seconds += duration_seconds
         return duration_seconds
 
+    def _dashboard_today_key(self) -> str:
+        return datetime.date.today().isoformat()
+
+    def _format_dashboard_total_audio_time(self, total_seconds: float | int) -> str:
+        safe_seconds = max(0.0, float(total_seconds))
+        total_minutes = 0 if safe_seconds <= 0 else max(1, int(round(safe_seconds / 60.0)))
+        if total_minutes <= 0:
+            return "0분"
+        hours, minutes = divmod(total_minutes, 60)
+        if hours > 0:
+            return f"{hours}시간 {minutes}분"
+        return f"{minutes}분"
+
+    def _format_dashboard_avg_speed_text(self) -> str:
+        if self.dashboard_observed_audio_seconds > 0 and self.dashboard_observed_processing_seconds > 0:
+            ratio = self.dashboard_observed_processing_seconds / self.dashboard_observed_audio_seconds
+            ratio = max(0.05, min(5.0, ratio))
+            minutes_text = f"{ratio:.1f}".rstrip("0").rstrip(".")
+            return f"오디오 1분 -> 약 {minutes_text}분"
+        return "오디오 1분 -> 약 -"
+
+    def _sanitize_dashboard_daily_counts(self, raw_obj) -> dict[str, int]:
+        if not isinstance(raw_obj, dict):
+            return {}
+        cleaned: dict[str, int] = {}
+        for key, value in raw_obj.items():
+            day_key = str(key or "").strip()
+            if not day_key:
+                continue
+            try:
+                count = int(value)
+            except Exception:
+                continue
+            if count > 0:
+                cleaned[day_key] = count
+        return cleaned
+
+    def _sanitize_dashboard_recent_items(self, raw_obj) -> list[dict]:
+        if not isinstance(raw_obj, list):
+            return []
+        cleaned: list[dict] = []
+        for item in raw_obj:
+            if not isinstance(item, dict):
+                continue
+            file_name = os.path.basename(str(item.get("file_name", "")).strip()) or "알 수 없음"
+            completed_at = str(item.get("completed_at", "")).strip()
+            try:
+                timestamp = float(item.get("timestamp", 0.0))
+            except Exception:
+                timestamp = 0.0
+            if not completed_at and timestamp > 0:
+                completed_at = datetime.datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+            if not completed_at:
+                completed_at = "-"
+            cleaned.append(
+                {
+                    "file_name": file_name,
+                    "completed_at": completed_at,
+                    "timestamp": max(0.0, timestamp),
+                }
+            )
+        cleaned.sort(key=lambda x: float(x.get("timestamp", 0.0)), reverse=True)
+        return cleaned[:10]
+
+    def _resolve_done_duration_seconds(self, file_name: str, preferred_seconds: float | int = 0.0) -> float:
+        duration_seconds = max(0.0, float(preferred_seconds))
+        if duration_seconds > 0:
+            return duration_seconds
+
+        candidate_names: list[str] = []
+        for candidate in (file_name, self.current_file_name):
+            name = str(candidate or "").strip()
+            if name and name not in candidate_names:
+                candidate_names.append(name)
+
+        for candidate_name in candidate_names:
+            duration_seconds = self._lookup_run_audio_seconds(candidate_name)
+            if duration_seconds > 0:
+                return duration_seconds
+
+        target_keys: set[str] = set()
+        for candidate_name in candidate_names:
+            target_keys.update(self._queue_name_keys(candidate_name))
+
+        matched_row = None
+        if target_keys:
+            for row in self.file_queue_rows:
+                row_keys: set[str] = set()
+                row_keys.update(self._queue_name_keys(str(row.get("filename", ""))))
+                row_keys.update(self._queue_name_keys(str(row.get("transcribe_name", ""))))
+                if row_keys & target_keys:
+                    matched_row = row
+                    break
+
+        if matched_row is not None:
+            duration_seconds = self._duration_text_to_seconds(matched_row.get("duration", ""))
+            if duration_seconds > 0:
+                return duration_seconds
+
+            src = self._normalize_saved_folder_path(matched_row.get("source_path", ""))
+            if src and os.path.isfile(src):
+                redetected = self._detect_duration_mmss(src)
+                duration_seconds = self._duration_text_to_seconds(redetected)
+                if duration_seconds > 0:
+                    matched_row["duration"] = redetected
+                    return duration_seconds
+
+        return 0.0
+
+    def load_dashboard_statistics(self):
+        try:
+            self.dashboard_total_done_files = max(
+                0, int(self.ui_settings.value(SETTINGS_KEY_DASH_TOTAL_DONE_FILES, 0, type=int))
+            )
+            self.dashboard_total_audio_seconds = max(
+                0.0, float(self.ui_settings.value(SETTINGS_KEY_DASH_TOTAL_AUDIO_SECONDS, 0.0, type=float))
+            )
+
+            raw_daily = self.ui_settings.value(SETTINGS_KEY_DASH_DAILY_COUNTS_JSON, "{}")
+            parsed_daily = json.loads(str(raw_daily or "{}"))
+            self.dashboard_daily_done_counts = self._sanitize_dashboard_daily_counts(parsed_daily)
+
+            raw_recent = self.ui_settings.value(SETTINGS_KEY_DASH_RECENT_DONE_JSON, "[]")
+            parsed_recent = json.loads(str(raw_recent or "[]"))
+            self.dashboard_recent_done_items = self._sanitize_dashboard_recent_items(parsed_recent)
+
+            self.dashboard_observed_audio_seconds = max(
+                0.0, float(self.ui_settings.value(SETTINGS_KEY_DASH_OBSERVED_AUDIO_SECONDS, 0.0, type=float))
+            )
+            self.dashboard_observed_processing_seconds = max(
+                0.0, float(self.ui_settings.value(SETTINGS_KEY_DASH_OBSERVED_PROCESSING_SECONDS, 0.0, type=float))
+            )
+        except Exception:
+            self.dashboard_total_done_files = 0
+            self.dashboard_total_audio_seconds = 0.0
+            self.dashboard_daily_done_counts = {}
+            self.dashboard_recent_done_items = []
+            self.dashboard_observed_audio_seconds = 0.0
+            self.dashboard_observed_processing_seconds = 0.0
+
+    def save_dashboard_statistics(self):
+        try:
+            self.ui_settings.setValue(SETTINGS_KEY_DASH_TOTAL_DONE_FILES, int(max(0, self.dashboard_total_done_files)))
+            self.ui_settings.setValue(
+                SETTINGS_KEY_DASH_TOTAL_AUDIO_SECONDS, float(max(0.0, self.dashboard_total_audio_seconds))
+            )
+            self.ui_settings.setValue(
+                SETTINGS_KEY_DASH_DAILY_COUNTS_JSON,
+                json.dumps(self.dashboard_daily_done_counts, ensure_ascii=False),
+            )
+            self.ui_settings.setValue(
+                SETTINGS_KEY_DASH_RECENT_DONE_JSON,
+                json.dumps(self.dashboard_recent_done_items[:10], ensure_ascii=False),
+            )
+            self.ui_settings.setValue(
+                SETTINGS_KEY_DASH_OBSERVED_AUDIO_SECONDS, float(max(0.0, self.dashboard_observed_audio_seconds))
+            )
+            self.ui_settings.setValue(
+                SETTINGS_KEY_DASH_OBSERVED_PROCESSING_SECONDS,
+                float(max(0.0, self.dashboard_observed_processing_seconds)),
+            )
+            self.ui_settings.sync()
+        except Exception:
+            pass
+
+    def refresh_dashboard_view(self):
+        if not hasattr(self, "label_dash_total_done"):
+            return
+
+        self.label_dash_total_done.setText(str(int(max(0, self.dashboard_total_done_files))))
+        self.label_dash_total_audio.setText(
+            self._format_dashboard_total_audio_time(self.dashboard_total_audio_seconds)
+        )
+        today_count = int(max(0, self.dashboard_daily_done_counts.get(self._dashboard_today_key(), 0)))
+        self.label_dash_today_done.setText(str(today_count))
+        self.label_dash_speed.setText(self._format_dashboard_avg_speed_text())
+
+        items = self.dashboard_recent_done_items[:10]
+        self.dashboard_recent_table.setRowCount(len(items))
+        for row_idx, item in enumerate(items):
+            file_item = QTableWidgetItem(str(item.get("file_name", "알 수 없음")))
+            file_item.setFlags(Qt.ItemIsEnabled)
+            file_item.setTextAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            self.dashboard_recent_table.setItem(row_idx, 0, file_item)
+
+            time_item = QTableWidgetItem(str(item.get("completed_at", "-")))
+            time_item.setFlags(Qt.ItemIsEnabled)
+            time_item.setTextAlignment(Qt.AlignCenter)
+            self.dashboard_recent_table.setItem(row_idx, 1, time_item)
+            self.dashboard_recent_table.setRowHeight(row_idx, 34)
+
+    def record_dashboard_done(
+        self,
+        file_name: str,
+        duration_seconds: float | int,
+        processing_seconds: float | int | None = None,
+    ):
+        safe_name = os.path.basename(str(file_name or "").strip()) or "알 수 없음"
+        safe_duration = max(0.0, float(duration_seconds))
+        self.dashboard_total_done_files += 1
+        self.dashboard_total_audio_seconds += safe_duration
+
+        today_key = self._dashboard_today_key()
+        today_count = int(self.dashboard_daily_done_counts.get(today_key, 0))
+        self.dashboard_daily_done_counts[today_key] = today_count + 1
+
+        completed_at = datetime.datetime.now()
+        self.dashboard_recent_done_items.append(
+            {
+                "file_name": safe_name,
+                "completed_at": completed_at.strftime("%Y-%m-%d %H:%M:%S"),
+                "timestamp": completed_at.timestamp(),
+            }
+        )
+        self.dashboard_recent_done_items = self._sanitize_dashboard_recent_items(
+            self.dashboard_recent_done_items
+        )
+
+        if processing_seconds is not None and safe_duration > 0:
+            safe_processing = max(0.0, float(processing_seconds))
+            if safe_processing > 0:
+                self.dashboard_observed_audio_seconds += safe_duration
+                self.dashboard_observed_processing_seconds += safe_processing
+
+        self.save_dashboard_statistics()
+        self.refresh_dashboard_view()
+
 
 
 
@@ -20029,16 +20322,22 @@ class TranscribeGUI(QWidget):
             self.show_warning_message("\uACBD\uACE0", "\uC804\uC0AC\uD560 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uBA3C\uC800 MP3 \uD30C\uC77C\uC744 \uBD88\uB7EC\uC624\uC138\uC694.")
             return
 
-        if not self._confirm_filename_changes(self.file_queue_rows):
+        checked_rows = self._get_checked_queue_rows()
+        rows_to_run = checked_rows if checked_rows else self.file_queue_rows
+        run_scope = "checked" if checked_rows else "all"
+
+        if not self._confirm_filename_changes(rows_to_run):
             return
 
         all_items, rename_success, rename_failed = self._prepare_transcribe_items_with_rename(
-            self.file_queue_rows,
-            "all",
+            rows_to_run,
+            run_scope,
         )
 
         if rename_success > 0 or rename_failed > 0:
-            self.append_log_text(f"[GUI] all-mode rename result: success {rename_success} / failed {rename_failed}\\n")
+            self.append_log_text(
+                f"[GUI] {run_scope}-mode rename result: success {rename_success} / failed {rename_failed}\\n"
+            )
 
         if not all_items:
             self.show_warning_message("\uACBD\uACE0", "\uC804\uC0AC\uD560 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.")
@@ -20048,7 +20347,7 @@ class TranscribeGUI(QWidget):
 
         self.selected_run_items = all_items
         self._cleanup_selected_runtime_folder()
-        self.run_mode = "all"
+        self.run_mode = "selected" if checked_rows else "all"
         self.run_transcribe_process()
 
     def _output_triplet(self, mp3_path: str):
@@ -21749,6 +22048,7 @@ class TranscribeGUI(QWidget):
             audio_seconds = self._consume_run_audio_seconds(name)
             if audio_seconds <= 0 and self.current_file_name:
                 audio_seconds = self._consume_run_audio_seconds(self.current_file_name)
+            processing_seconds = None
             self.run_current_audio_seconds = 0.0
 
 
@@ -21762,6 +22062,7 @@ class TranscribeGUI(QWidget):
 
 
                 d = time.time() - self.current_file_started_at
+                processing_seconds = d
 
 
 
@@ -21855,6 +22156,13 @@ class TranscribeGUI(QWidget):
 
 
             self.update_session_label()
+            done_duration_seconds = self._resolve_done_duration_seconds(name, audio_seconds)
+            measured_processing = (
+                processing_seconds
+                if processing_seconds is not None and processing_seconds > 0.4 and done_duration_seconds > 0
+                else None
+            )
+            self.record_dashboard_done(name, done_duration_seconds, processing_seconds=measured_processing)
 
 
 
@@ -21951,7 +22259,9 @@ class TranscribeGUI(QWidget):
 
 
             self._set_queue_status_by_name(name, QUEUE_STATUS_DONE)
-            self._consume_run_audio_seconds(name)
+            skip_audio_seconds = self._consume_run_audio_seconds(name)
+            skip_audio_seconds = self._resolve_done_duration_seconds(name, skip_audio_seconds)
+            self.record_dashboard_done(name, skip_audio_seconds, processing_seconds=None)
             self.run_current_audio_seconds = 0.0
             self.update_total_eta_label()
 
