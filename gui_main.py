@@ -238,6 +238,12 @@ from PySide6.QtWidgets import (
 
 
 
+    QLineEdit,
+
+
+
+
+
     QMenu,
 
 
@@ -420,6 +426,8 @@ SETTINGS_KEY_SHUTDOWN_AFTER_DONE = "ui/shutdown_after_done"
 
 
 SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS = "ui/shutdown_wait_seconds"
+SETTINGS_KEY_TRANSCRIPTION_ENGINE = "ui/transcription_engine"
+SETTINGS_KEY_COLAB_URL = "ui/colab_url"
 
 SETTINGS_KEY_DASH_TOTAL_DONE_FILES = "dashboard/total_done_files"
 SETTINGS_KEY_DASH_TOTAL_AUDIO_SECONDS = "dashboard/total_audio_seconds"
@@ -3794,7 +3802,7 @@ class TrayToastWindow(QWidget):
 
 
 
-        self.progress_bar.setFixedHeight(8)
+        self.progress_bar.setFixedHeight(14)
 
 
 
@@ -4946,7 +4954,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.resize(1320, 790)
+        self.resize(1320, 760)
 
 
 
@@ -5191,6 +5199,8 @@ class TranscribeGUI(QWidget):
         self.folder_tab_filter_mode = "all"
         self.folder_preview_full_text = ""
         self.folder_preview_path = ""
+        self.transcription_engine = "local"
+        self.colab_url = ""
 
 
 
@@ -6507,7 +6517,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        trans_layout.setSpacing(8)
+        trans_layout.setSpacing(0)
 
 
 
@@ -6543,13 +6553,8 @@ class TranscribeGUI(QWidget):
 
 
 
-        dbox.setContentsMargins(16, 16, 16, 12)
-
-
-
-
-
-        dbox.setSpacing(8)
+        dbox.setContentsMargins(16, 6, 16, 4)
+        dbox.setSpacing(1)
 
 
 
@@ -6699,7 +6704,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.total_progress_bar.setFixedHeight(8)
+        self.total_progress_bar.setFixedHeight(14)
 
 
 
@@ -6759,7 +6764,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.current_progress_bar.setFixedHeight(8)
+        self.current_progress_bar.setFixedHeight(14)
 
 
 
@@ -7053,72 +7058,34 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.card_progress.setMinimumHeight(0)
-
-
-
-
-
+        self.card_progress.setMinimumHeight(130)
         progress_box = QVBoxLayout(self.card_progress)
+        progress_box.setContentsMargins(14, 14, 14, 14)
+        progress_box.setSpacing(2)
 
 
 
 
 
-        progress_box.setContentsMargins(14, 10, 14, 10)
-
-
-
-
-
-        progress_box.setSpacing(6)
-
-
-
-
-
-        progress_box.addWidget(QLabel("TOTAL PROGRESS", objectName="DashboardMicroLabel"))
-
-
-
-
+        lbl_tp = QLabel("TOTAL PROGRESS", objectName="DashboardMicroLabel")
+        lbl_tp.setMinimumHeight(22)
+        progress_box.addWidget(lbl_tp)
+        progress_box.addSpacing(2)
 
         metric_header = QHBoxLayout()
-
-
-
-
-
         metric_header.setContentsMargins(0, 0, 0, 0)
+        metric_header.setSpacing(10)
 
+        self.label_total_progress_text.setMinimumHeight(36)
+        self.label_total_progress_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        metric_header.addWidget(self.label_total_progress_text, 0)
 
-
-
-
-        metric_header.setSpacing(8)
-
-
-
-
-
-        metric_header.addWidget(self.label_total_progress_text, 1)
-
-
-
-
-
-        metric_header.addWidget(self.label_total_done_hint, 0)
-
-
-
-
+        self.label_total_done_hint.setMinimumHeight(36)
+        self.label_total_done_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        metric_header.addWidget(self.label_total_done_hint, 1)
 
         progress_box.addLayout(metric_header)
-
-
-
-
-
+        progress_box.addSpacing(12)
         progress_box.addWidget(self.total_progress_bar)
 
 
@@ -7377,31 +7344,23 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.card_current.setMinimumHeight(0)
-
-
-
-
-
+        self.card_current.setMinimumHeight(175)
         current_box = QVBoxLayout(self.card_current)
+        current_box.setContentsMargins(16, 20, 16, 20)
 
 
 
 
 
-        current_box.setContentsMargins(14, 12, 14, 12)
+        current_box.setSpacing(0)
+        label_cf = QLabel("CURRENT FILE", objectName="DashboardMicroLabel")
+        label_cf.setMinimumHeight(22)
 
 
 
 
 
-        current_box.setSpacing(8)
-
-
-
-
-
-        current_box.addWidget(QLabel("CURRENT FILE", objectName="DashboardMicroLabel"))
+        current_box.addWidget(label_cf)
 
 
 
@@ -7413,13 +7372,19 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.label_current_file.setMinimumHeight(24)
+        self.label_current_file.setMinimumHeight(28)
 
 
 
 
 
         current_box.addWidget(self.label_current_file)
+
+
+
+
+
+        current_box.addSpacing(16)
 
 
 
@@ -7449,18 +7414,13 @@ class TranscribeGUI(QWidget):
 
 
 
-        current_header.addWidget(QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel"), 1)
-
-
-
-
+        label_cp = QLabel("CURRENT PROGRESS", objectName="DashboardMicroLabel")
+        label_cp.setMinimumHeight(22)
+        current_header.addWidget(label_cp, 1)
 
         self.label_current_progress_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-
-
-
-
-
+        self.label_current_progress_text.setMinimumHeight(22)
+        self.label_current_progress_text.setContentsMargins(0, 0, 6, 0)
         current_header.addWidget(self.label_current_progress_text, 0)
 
 
@@ -7468,12 +7428,9 @@ class TranscribeGUI(QWidget):
 
 
         current_box.addLayout(current_header)
-
-
-
-
-
+        current_box.addSpacing(4)
         current_box.addWidget(self.current_progress_bar)
+        current_box.addSpacing(18)
 
 
 
@@ -7533,19 +7490,19 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.label_current_eta.setMinimumHeight(24)
+        self.label_current_eta.setMinimumHeight(26)
 
 
 
 
 
-        self.label_session_counter.setMinimumHeight(24)
+        self.label_session_counter.setMinimumHeight(26)
 
 
 
 
 
-        self.label_output_value.setMinimumHeight(24)
+        self.label_output_value.setMinimumHeight(26)
 
 
 
@@ -7876,6 +7833,9 @@ class TranscribeGUI(QWidget):
 
 
         self.file_queue_table.setHorizontalHeaderLabels(["", "Filename", "Duration", "Status", "Action"])
+        self.file_queue_table.horizontalHeaderItem(2).setTextAlignment(Qt.AlignCenter)
+        self.file_queue_table.horizontalHeaderItem(3).setTextAlignment(Qt.AlignCenter)
+        self.file_queue_table.horizontalHeaderItem(4).setTextAlignment(Qt.AlignCenter)
 
 
 
@@ -7935,13 +7895,13 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.file_queue_table.setColumnWidth(3, 100)
+        self.file_queue_table.setColumnWidth(3, 112)
 
 
 
 
 
-        self.file_queue_table.setColumnWidth(4, 60)
+        self.file_queue_table.setColumnWidth(4, 84)
 
 
 
@@ -7977,7 +7937,14 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.file_queue_table.setMinimumHeight(54)
+        self.file_queue_row_height = 36
+        queue_header_h = self.file_queue_table.horizontalHeader().sizeHint().height()
+        queue_frame_h = max(2, self.file_queue_table.frameWidth() * 2)
+        self.file_queue_table.setMinimumHeight(
+            queue_header_h + (self.file_queue_row_height * 6) + queue_frame_h + 10
+        )
+        self.file_queue_table.setMaximumHeight(queue_header_h + (self.file_queue_row_height * 10) + queue_frame_h)
+        self.file_queue_table.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
 
 
 
@@ -8043,7 +8010,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        trans_layout.addWidget(files, 1)
+        trans_layout.addWidget(files, 100)
 
 
 
@@ -8085,13 +8052,8 @@ class TranscribeGUI(QWidget):
 
 
 
-        cbox.setContentsMargins(14, 14, 14, 14)
-
-
-
-
-
-        cbox.setSpacing(8)
+        cbox.setContentsMargins(10, 4, 10, 2)
+        cbox.setSpacing(0)
 
 
 
@@ -8133,13 +8095,67 @@ class TranscribeGUI(QWidget):
 
 
 
+        self.transcription_engine_panel = QWidget()
+        self.transcription_engine_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        engine_box = QVBoxLayout(self.transcription_engine_panel)
+        engine_box.setContentsMargins(0, 2, 0, 4)
+        engine_box.setSpacing(4)
+
+        engine_row = QHBoxLayout()
+        engine_row.setContentsMargins(0, 0, 0, 0)
+        engine_row.setSpacing(6)
+        self.label_transcription_engine = QLabel("전사 방식", objectName="TranscriptionModeLabel")
+        self.label_transcription_engine.setMinimumWidth(64)
+        self.label_transcription_engine.setMaximumWidth(64)
+        engine_row.addWidget(self.label_transcription_engine, 0)
+
+        self.combo_transcription_engine = QComboBox()
+        self.combo_transcription_engine.setObjectName("TranscriptionEngineCombo")
+        self.combo_transcription_engine.setFixedHeight(34)
+        self.combo_transcription_engine.setMaxVisibleItems(2)
+        self.combo_transcription_engine.addItem("로컬 Whisper", "local")
+        self.combo_transcription_engine.addItem("Colab Large-v3", "colab")
+        engine_row.addWidget(self.combo_transcription_engine, 1)
+        engine_box.addLayout(engine_row)
+
+        self.colab_url_panel = QWidget()
+        self.colab_url_panel.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        colab_policy = self.colab_url_panel.sizePolicy()
+        colab_policy.setRetainSizeWhenHidden(False)
+        self.colab_url_panel.setSizePolicy(colab_policy)
+        colab_box = QVBoxLayout(self.colab_url_panel)
+        colab_box.setContentsMargins(0, 0, 0, 0)
+        colab_box.setSpacing(0)
+
+        colab_row = QHBoxLayout()
+        colab_row.setContentsMargins(0, 0, 0, 0)
+        colab_row.setSpacing(6)
+        self.label_colab_url = QLabel("Colab URL", objectName="TranscriptionModeLabel")
+        self.label_colab_url.setMinimumWidth(64)
+        self.label_colab_url.setMaximumWidth(64)
+        colab_row.addWidget(self.label_colab_url, 0)
+        self.input_colab_url = QLineEdit()
+        self.input_colab_url.setObjectName("ColabUrlInput")
+        self.input_colab_url.setMinimumHeight(32)
+        self.input_colab_url.setPlaceholderText("https://colab.research.google.com/...")
+        colab_row.addWidget(self.input_colab_url, 1)
+
+        self.btn_colab_check = QPushButton("연결 확인")
+        self.btn_colab_check.setProperty("uiRole", "controlOutline")
+        self.btn_colab_check.setFixedHeight(32)
+        self.btn_colab_check.setFixedWidth(92)
+        colab_row.addWidget(self.btn_colab_check, 0)
+        colab_box.addLayout(colab_row)
+        engine_box.addWidget(self.colab_url_panel)
+        cbox.addWidget(self.transcription_engine_panel)
+
         row1 = QHBoxLayout()
 
 
 
 
 
-        row1.setSpacing(10)
+        row1.setSpacing(6)
 
 
 
@@ -8157,7 +8173,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_move_and_transcribe.setFixedHeight(48)
+        self.btn_move_and_transcribe.setFixedHeight(38)
 
 
 
@@ -8181,7 +8197,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_transcribe_target.setFixedHeight(48)
+        self.btn_transcribe_target.setFixedHeight(38)
 
 
 
@@ -8217,7 +8233,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        row2.setSpacing(10)
+        row2.setSpacing(6)
 
 
 
@@ -8235,7 +8251,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_move_files.setFixedHeight(44)
+        self.btn_move_files.setFixedHeight(34)
 
 
 
@@ -8253,7 +8269,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_stop_now.setFixedHeight(44)
+        self.btn_stop_now.setFixedHeight(34)
 
 
 
@@ -8308,6 +8324,7 @@ class TranscribeGUI(QWidget):
 
 
         trans_scroll.setWidgetResizable(True)
+        trans_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
 
 
@@ -8716,6 +8733,9 @@ class TranscribeGUI(QWidget):
 
 
         self.shutdown_wait_combo.currentIndexChanged.connect(self.save_ui_preferences)
+        self.combo_transcription_engine.currentIndexChanged.connect(self._on_transcription_engine_changed)
+        self.input_colab_url.textChanged.connect(self._on_colab_url_text_changed)
+        self.btn_colab_check.clicked.connect(self._handle_colab_connection_check)
 
 
 
@@ -8746,6 +8766,7 @@ class TranscribeGUI(QWidget):
 
 
         self._sync_shutdown_wait_combo_state()
+        self._sync_transcription_engine_ui_state()
 
 
 
@@ -10462,6 +10483,10 @@ class TranscribeGUI(QWidget):
                 right: 6px;
             }
 
+            QTableWidget#FileQueueTable QHeaderView::section {
+                padding: 8px 6px;
+            }
+
 
 
 
@@ -10864,6 +10889,78 @@ class TranscribeGUI(QWidget):
 
             }
 
+            QComboBox#TranscriptionEngineCombo,
+            QLineEdit#ColabUrlInput {
+                border: 1px solid #94a3b8;
+                border-radius: 2px;
+                background: #ffffff;
+                color: #334155;
+                padding: 0 8px;
+                min-height: 32px;
+            }
+
+            QComboBox#TranscriptionEngineCombo:hover,
+            QLineEdit#ColabUrlInput:hover {
+                border: 1px solid #94a3b8;
+            }
+
+            QComboBox#TranscriptionEngineCombo:focus,
+            QLineEdit#ColabUrlInput:focus {
+                border: 1px solid #334155;
+            }
+
+            QComboBox#TranscriptionEngineCombo::drop-down {
+                border: none;
+                width: 24px;
+            }
+
+            QComboBox#TranscriptionEngineCombo QAbstractItemView {
+                border: 1px solid #cbd5e1;
+                background: #ffffff;
+                color: #334155;
+                outline: 0;
+                padding: 2px 0;
+                selection-background-color: #e2e8f0;
+                selection-color: #1e293b;
+            }
+
+            QComboBox#TranscriptionEngineCombo QAbstractItemView::item {
+                min-height: 28px;
+                padding: 4px 10px;
+                border: none;
+                background: #ffffff;
+                color: #334155;
+            }
+
+            QComboBox#TranscriptionEngineCombo QAbstractItemView::item:hover {
+                background: #f1f5f9;
+                color: #0f172a;
+            }
+
+            QComboBox#TranscriptionEngineCombo QAbstractItemView::item:selected {
+                background: #e2e8f0;
+                color: #0f172a;
+            }
+
+            QComboBox#TranscriptionEngineCombo QAbstractItemView::item:selected:hover {
+                background: #cbd5e1;
+                color: #0f172a;
+            }
+
+            QComboBox#TranscriptionEngineCombo:disabled,
+            QLineEdit#ColabUrlInput:disabled {
+                border: 1px solid #e2e8f0;
+                background: #f8fafc;
+                color: #94a3b8;
+            }
+
+            QLabel#TranscriptionModeLabel {
+                color: #334155;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.2px;
+            }
+
 
 
 
@@ -10886,19 +10983,19 @@ class TranscribeGUI(QWidget):
 
 
 
-                border-radius: 6px;
+                border-radius: 7px;
 
 
 
 
 
-                min-height: 8px;
+                min-height: 14px;
 
 
 
 
 
-                max-height: 8px;
+                max-height: 14px;
 
 
 
@@ -12336,7 +12433,9 @@ class TranscribeGUI(QWidget):
 
 
 
-            self.file_queue_table.setRowHeight(row_idx, 38)
+            self.file_queue_table.setRowHeight(
+                row_idx, int(getattr(self, "file_queue_row_height", 36))
+            )
 
 
 
@@ -13808,25 +13907,25 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.btn_move_and_transcribe.setFixedHeight(44)
+        self.btn_move_and_transcribe.setFixedHeight(38)
 
 
 
 
 
-        self.btn_transcribe_target.setFixedHeight(44)
+        self.btn_transcribe_target.setFixedHeight(38)
 
 
 
 
 
-        self.btn_move_files.setFixedHeight(38)
+        self.btn_move_files.setFixedHeight(34)
 
 
 
 
 
-        self.btn_stop_now.setFixedHeight(38)
+        self.btn_stop_now.setFixedHeight(34)
 
 
 
@@ -13916,25 +14015,25 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.current_progress_bar.setMinimumHeight(8)
+        self.current_progress_bar.setMinimumHeight(14)
 
 
 
 
 
-        self.current_progress_bar.setMaximumHeight(8)
+        self.current_progress_bar.setMaximumHeight(14)
 
 
 
 
 
-        self.total_progress_bar.setMinimumHeight(8)
+        self.total_progress_bar.setMinimumHeight(14)
 
 
 
 
 
-        self.total_progress_bar.setMaximumHeight(8)
+        self.total_progress_bar.setMaximumHeight(14)
 
 
 
@@ -13946,7 +14045,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        top_card_h = 92
+        top_card_h = 130
 
 
 
@@ -14000,7 +14099,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        detail_min_h = 132
+        detail_min_h = 175
 
 
 
@@ -14018,7 +14117,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        dashboard_h = top_card_h + detail_min_h + 48
+        dashboard_h = top_card_h + detail_min_h + 34
 
 
 
@@ -16602,6 +16701,46 @@ class TranscribeGUI(QWidget):
 
 
 
+    def _normalize_transcription_engine(self, value) -> str:
+        normalized = str(value or "").strip().lower()
+        if normalized == "colab":
+            return "colab"
+        return "local"
+
+    def _set_transcription_engine_value(self, engine: str):
+        normalized = self._normalize_transcription_engine(engine)
+        idx = self.combo_transcription_engine.findData(normalized)
+        if idx < 0:
+            idx = 0
+        if self.combo_transcription_engine.currentIndex() != idx:
+            self.combo_transcription_engine.setCurrentIndex(idx)
+        self.transcription_engine = normalized
+
+    def _current_transcription_engine(self) -> str:
+        return self._normalize_transcription_engine(self.combo_transcription_engine.currentData())
+
+    def _sync_transcription_engine_ui_state(self):
+        is_colab = self._current_transcription_engine() == "colab"
+        self.colab_url_panel.setVisible(is_colab)
+        self.input_colab_url.setEnabled(is_colab)
+        self.btn_colab_check.setEnabled(is_colab)
+
+    def _on_transcription_engine_changed(self, _index: int = -1):
+        self.transcription_engine = self._current_transcription_engine()
+        self._sync_transcription_engine_ui_state()
+        self.save_ui_preferences()
+
+    def _on_colab_url_text_changed(self, text: str):
+        self.colab_url = str(text or "").strip()
+        self.save_ui_preferences()
+
+    def _handle_colab_connection_check(self):
+        colab_url = str(self.input_colab_url.text() or "").strip()
+        if not colab_url:
+            self.show_info_message("알림", "Colab URL을 입력해 주세요.")
+            return
+        self.show_info_message("알림", "Colab 연결 확인 기능은 다음 단계에서 구현됩니다.")
+
     def load_ui_preferences(self):
         try:
             self.target_folder = self._normalize_saved_folder_path(
@@ -16620,10 +16759,18 @@ class TranscribeGUI(QWidget):
                 self.ui_settings.value(SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS, 0, type=int)
             )
             self._set_shutdown_wait_seconds(shutdown_wait_seconds)
+            saved_engine = self._normalize_transcription_engine(
+                self.ui_settings.value(SETTINGS_KEY_TRANSCRIPTION_ENGINE, "local")
+            )
+            self._set_transcription_engine_value(saved_engine)
+            saved_colab_url = str(self.ui_settings.value(SETTINGS_KEY_COLAB_URL, "") or "").strip()
+            self.colab_url = saved_colab_url
+            self.input_colab_url.setText(saved_colab_url)
         except Exception:
             pass
 
         self._sync_shutdown_wait_combo_state()
+        self._sync_transcription_engine_ui_state()
         self._refresh_path_labels()
         QTimer.singleShot(0, self._refresh_path_labels)
 
@@ -16670,6 +16817,14 @@ class TranscribeGUI(QWidget):
 
 
             self.ui_settings.setValue(SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS, self._get_shutdown_wait_seconds())
+            self.ui_settings.setValue(
+                SETTINGS_KEY_TRANSCRIPTION_ENGINE, self._current_transcription_engine()
+            )
+            self.ui_settings.setValue(
+                SETTINGS_KEY_COLAB_URL, str(self.input_colab_url.text() or "").strip()
+            )
+            self.transcription_engine = self._current_transcription_engine()
+            self.colab_url = str(self.input_colab_url.text() or "").strip()
 
 
 
@@ -24016,7 +24171,7 @@ if __name__ == "__main__":
 
 
 
-    window.show()
+    window.showMaximized()
 
 
 
