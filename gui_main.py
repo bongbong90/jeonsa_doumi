@@ -387,8 +387,15 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 
 ETA_EMPTY_TEXT = "-"
 DEFAULT_WHISPER_TIME_RATIO = 0.5
-COLAB_CHUNK_SECONDS = 600
+# 임시 안정화 값: Cloudflare 524 완화 확인 전까지 조각 길이를 축소
+COLAB_CHUNK_SECONDS = 180
 COLAB_PROGRESS_FILENAME = "progress.json"
+COLAB_JOB_START_TIMEOUT = 60
+COLAB_JOB_STATUS_TIMEOUT = 30
+COLAB_JOB_RESULT_TIMEOUT = 60
+COLAB_JOB_POLL_SECONDS = 2.0
+COLAB_JOB_MAX_WAIT_SECONDS = 3600.0
+COLAB_JOB_POLL_MAX_ERRORS = 8
 
 
 
@@ -16865,10 +16872,12 @@ class TranscribeGUI(QWidget):
 
         endpoint = "/" + str(endpoint_path or "").strip().lstrip("/")
         base_path = parsed.path.rstrip("/")
-        for known_suffix in ("/health", "/transcribe"):
+        for known_suffix in ("/health", "/transcribe/start", "/transcribe", "/jobs"):
             if base_path.lower().endswith(known_suffix):
                 base_path = base_path[: -len(known_suffix)]
                 break
+        if re.search(r"/jobs/[^/]+/(status|result)$", base_path, flags=re.IGNORECASE):
+            base_path = re.sub(r"/jobs/[^/]+/(status|result)$", "", base_path, flags=re.IGNORECASE)
         target_path = f"{base_path}{endpoint}" if base_path else endpoint
         normalized = parsed._replace(path=target_path, query="", fragment="")
         return normalized.geturl()
@@ -16902,6 +16911,21 @@ class TranscribeGUI(QWidget):
 
     def _build_colab_transcribe_url(self, raw_url: str) -> str:
         return self._build_colab_endpoint_url(raw_url, "/transcribe")
+
+    def _build_colab_job_start_url(self, raw_url: str) -> str:
+        return self._build_colab_endpoint_url(raw_url, "/transcribe/start")
+
+    def _build_colab_job_status_url(self, raw_url: str, job_id: str) -> str:
+        safe_job_id = urllib_parse.quote(str(job_id or "").strip(), safe="")
+        if not safe_job_id:
+            return ""
+        return self._build_colab_endpoint_url(raw_url, f"/jobs/{safe_job_id}/status")
+
+    def _build_colab_job_result_url(self, raw_url: str, job_id: str) -> str:
+        safe_job_id = urllib_parse.quote(str(job_id or "").strip(), safe="")
+        if not safe_job_id:
+            return ""
+        return self._build_colab_endpoint_url(raw_url, f"/jobs/{safe_job_id}/result")
 
     def _colab_path_key(self, path: str) -> str:
         normalized = self._normalize_saved_folder_path(path)
@@ -16960,6 +16984,189 @@ class TranscribeGUI(QWidget):
             )
         return items
 
+    def _extract_colab_progress_partial_items(self, payload) -> list[dict]:
+        if not isinstance(payload, dict):
+            return []
+        raw_items = payload.get("partial_files", [])
+        if not isinstance(raw_items, list):
+            return []
+        items: list[dict] = []
+        for raw in raw_items:
+            if not isinstance(raw, dict):
+                continue
+            mp3_path = self._normalize_saved_folder_path(raw.get("mp3_path", ""))
+            if not mp3_path:
+                continue
+
+            try:
+                chunk_seconds = int(raw.get("chunk_seconds", COLAB_CHUNK_SECONDS) or COLAB_CHUNK_SECONDS)
+            except (TypeError, ValueError):
+                chunk_seconds = int(COLAB_CHUNK_SECONDS)
+            chunk_seconds = max(60, chunk_seconds)
+
+            try:
+                total_chunks = int(raw.get("total_chunks", 0) or 0)
+            except (TypeError, ValueError):
+                total_chunks = 0
+            total_chunks = max(0, total_chunks)
+
+            try:
+                file_size = int(raw.get("file_size", 0) or 0)
+            except (TypeError, ValueError):
+                file_size = 0
+            file_size = max(0, file_size)
+
+            try:
+                file_mtime = float(raw.get("file_mtime", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                file_mtime = 0.0
+            file_mtime = max(0.0, file_mtime)
+
+            completed_chunks_raw = raw.get("completed_chunks", [])
+            completed_chunks: dict[int, dict] = {}
+            if isinstance(completed_chunks_raw, list):
+                for chunk_raw in completed_chunks_raw:
+                    if not isinstance(chunk_raw, dict):
+                        continue
+                    try:
+                        chunk_index = int(chunk_raw.get("index", 0))
+                    except (TypeError, ValueError):
+                        continue
+                    if chunk_index <= 0:
+                        continue
+
+                    result_payload = chunk_raw.get("result")
+                    if not isinstance(result_payload, dict):
+                        result_payload = {
+                            "text": str(chunk_raw.get("text", "") or "").strip(),
+                            "segments": chunk_raw.get("segments", []),
+                            "language": str(chunk_raw.get("language", "") or "").strip() or "ko",
+                        }
+                    try:
+                        normalized_result = self._normalize_colab_transcribe_payload(result_payload)
+                    except Exception:
+                        continue
+
+                    completed_chunks[chunk_index] = {
+                        "index": chunk_index,
+                        "offset": self._colab_safe_seconds(chunk_raw.get("offset", 0.0), default=0.0),
+                        "duration": self._colab_safe_seconds(chunk_raw.get("duration", 0.0), default=0.0),
+                        "result": normalized_result,
+                        "completed_at": str(chunk_raw.get("completed_at", "") or ""),
+                    }
+
+            items.append(
+                {
+                    "mp3_path": mp3_path,
+                    "chunk_seconds": chunk_seconds,
+                    "total_chunks": total_chunks,
+                    "file_size": file_size,
+                    "file_mtime": file_mtime,
+                    "completed_chunks": completed_chunks,
+                    "last_updated": str(raw.get("last_updated", "") or ""),
+                }
+            )
+        return items
+
+    def _serialize_colab_progress_partial_items(self, partial_map: dict[str, dict]) -> list[dict]:
+        if not isinstance(partial_map, dict):
+            return []
+        serialized: list[dict] = []
+        for item in partial_map.values():
+            if not isinstance(item, dict):
+                continue
+            mp3_path = self._normalize_saved_folder_path(item.get("mp3_path", ""))
+            if not mp3_path:
+                continue
+            completed_chunks_map = item.get("completed_chunks", {})
+            completed_chunks: list[dict] = []
+            if isinstance(completed_chunks_map, dict):
+                chunk_entries = [v for v in completed_chunks_map.values() if isinstance(v, dict)]
+                chunk_entries.sort(key=lambda x: str(x.get("index", "")))
+                for chunk in chunk_entries:
+                    try:
+                        chunk_index = int(chunk.get("index", 0) or 0)
+                    except (TypeError, ValueError):
+                        continue
+                    if chunk_index <= 0:
+                        continue
+                    result_payload = chunk.get("result", {})
+                    if not isinstance(result_payload, dict):
+                        continue
+                    completed_chunks.append(
+                        {
+                            "index": chunk_index,
+                            "offset": self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0),
+                            "duration": self._colab_safe_seconds(chunk.get("duration", 0.0), default=0.0),
+                            "result": result_payload,
+                            "completed_at": str(chunk.get("completed_at", "") or ""),
+                        }
+                    )
+
+            try:
+                chunk_seconds = int(item.get("chunk_seconds", COLAB_CHUNK_SECONDS) or COLAB_CHUNK_SECONDS)
+            except (TypeError, ValueError):
+                chunk_seconds = int(COLAB_CHUNK_SECONDS)
+            chunk_seconds = max(60, chunk_seconds)
+
+            try:
+                total_chunks = int(item.get("total_chunks", 0) or 0)
+            except (TypeError, ValueError):
+                total_chunks = 0
+            total_chunks = max(0, total_chunks)
+
+            try:
+                file_size = int(item.get("file_size", 0) or 0)
+            except (TypeError, ValueError):
+                file_size = 0
+            file_size = max(0, file_size)
+
+            try:
+                file_mtime = float(item.get("file_mtime", 0.0) or 0.0)
+            except (TypeError, ValueError):
+                file_mtime = 0.0
+            file_mtime = max(0.0, file_mtime)
+
+            serialized.append(
+                {
+                    "mp3_path": mp3_path,
+                    "chunk_seconds": chunk_seconds,
+                    "total_chunks": total_chunks,
+                    "file_size": file_size,
+                    "file_mtime": file_mtime,
+                    "completed_chunks": completed_chunks,
+                    "last_updated": str(item.get("last_updated", "") or self._colab_now_text()),
+                }
+            )
+        return serialized
+
+    def _build_colab_progress_payload_from_state(self, progress_state: dict) -> dict:
+        completed_map = progress_state.get("completed_map", {}) if isinstance(progress_state, dict) else {}
+        partial_map = progress_state.get("partial_map", {}) if isinstance(progress_state, dict) else {}
+        total_files = 0
+        if isinstance(progress_state, dict):
+            try:
+                total_files = int(progress_state.get("total_files", 0) or 0)
+            except (TypeError, ValueError):
+                total_files = 0
+        return {
+            "session_id": str(progress_state.get("session_id", "") or "") if isinstance(progress_state, dict) else "",
+            "engine": "colab",
+            "total_files": max(0, total_files),
+            "completed_files": list(completed_map.values()) if isinstance(completed_map, dict) else [],
+            "partial_files": self._serialize_colab_progress_partial_items(partial_map),
+            "last_updated": self._colab_now_text(),
+        }
+
+    def _save_colab_progress_state_snapshot(self, progress_state: dict):
+        if not isinstance(progress_state, dict):
+            return
+        progress_path = str(progress_state.get("path", "") or "")
+        if not progress_path:
+            return
+        payload = self._build_colab_progress_payload_from_state(progress_state)
+        self._save_colab_progress_payload_safely(progress_path, payload)
+
     def _save_colab_progress_payload_safely(self, progress_path: str, payload: dict):
         if not progress_path or not isinstance(payload, dict):
             return
@@ -17012,6 +17219,7 @@ class TranscribeGUI(QWidget):
             return
 
         completed_items = self._extract_colab_progress_completed_items(payload)
+        partial_items = self._extract_colab_progress_partial_items(payload)
         progress_key = self._colab_path_key(progress_path)
         if not progress_key:
             return
@@ -17030,7 +17238,10 @@ class TranscribeGUI(QWidget):
             self._colab_resume_session_id = session_id
             self._colab_resume_progress_path_key = progress_key
             self.append_log_text(
-                f"[GUI] Colab 이어하기 준비 완료: 완료 파일 {len(completed_keys)}개, 세션={session_id}\n",
+                (
+                    f"[GUI] Colab 이어하기 준비 완료: 완료 파일 {len(completed_keys)}개, "
+                    f"조각 캐시 {len(partial_items)}개, 세션={session_id}\n"
+                ),
                 force=True,
             )
             return
@@ -17051,6 +17262,7 @@ class TranscribeGUI(QWidget):
         progress_path = self._colab_progress_path_for_runtime(runtime_folder)
         resume_active = self._is_colab_resume_active_for_runtime(runtime_folder)
         completed_map: dict[str, dict] = {}
+        partial_map: dict[str, dict] = {}
         session_id = ""
         total_files = len(run_targets)
 
@@ -17065,6 +17277,10 @@ class TranscribeGUI(QWidget):
                 item_key = self._colab_path_key(item.get("mp3_path", ""))
                 if item_key:
                     completed_map[item_key] = item
+            for item in self._extract_colab_progress_partial_items(payload):
+                item_key = self._colab_path_key(item.get("mp3_path", ""))
+                if item_key:
+                    partial_map[item_key] = item
 
         if not session_id:
             session_id = self._colab_resume_session_id if resume_active else ""
@@ -17080,16 +17296,9 @@ class TranscribeGUI(QWidget):
             "session_id": session_id,
             "total_files": total_files,
             "completed_map": completed_map,
+            "partial_map": partial_map,
         }
-
-        payload_to_save = {
-            "session_id": session_id,
-            "engine": "colab",
-            "total_files": int(total_files),
-            "completed_files": list(completed_map.values()),
-            "last_updated": self._colab_now_text(),
-        }
-        self._save_colab_progress_payload_safely(progress_path, payload_to_save)
+        self._save_colab_progress_state_snapshot(state)
 
         self._colab_resume_enabled = True
         self._colab_resume_session_id = session_id
@@ -17118,15 +17327,167 @@ class TranscribeGUI(QWidget):
             "srt_path": str(srt_path or ""),
             "completed_at": self._colab_now_text(),
         }
+        partial_map = progress_state.setdefault("partial_map", {})
+        if isinstance(partial_map, dict):
+            partial_map.pop(item_key, None)
         self._colab_resume_completed_keys.add(item_key)
-        payload = {
-            "session_id": str(progress_state.get("session_id", "") or ""),
-            "engine": "colab",
-            "total_files": int(progress_state.get("total_files", 0) or 0),
-            "completed_files": list(completed_map.values()),
-            "last_updated": self._colab_now_text(),
+        self._save_colab_progress_state_snapshot(progress_state)
+
+    def _colab_file_signature(self, mp3_path: str) -> tuple[int, float]:
+        normalized = self._normalize_saved_folder_path(mp3_path)
+        if not normalized:
+            return (0, 0.0)
+        try:
+            stat = os.stat(normalized)
+            return (max(0, int(stat.st_size)), max(0.0, float(stat.st_mtime)))
+        except (OSError, ValueError):
+            return (0, 0.0)
+
+    def _get_colab_cached_chunk_results(
+        self,
+        progress_state: dict,
+        mp3_path: str,
+        chunk_total: int,
+        chunk_seconds: int,
+        file_size: int,
+        file_mtime: float,
+    ) -> dict[int, dict]:
+        if not isinstance(progress_state, dict):
+            return {}
+        item_key = self._colab_path_key(mp3_path)
+        if not item_key:
+            return {}
+        partial_map = progress_state.setdefault("partial_map", {})
+        if not isinstance(partial_map, dict):
+            return {}
+        cached_item = partial_map.get(item_key)
+        if not isinstance(cached_item, dict):
+            return {}
+
+        try:
+            cached_chunk_seconds = int(cached_item.get("chunk_seconds", 0) or 0)
+        except (TypeError, ValueError):
+            cached_chunk_seconds = 0
+        try:
+            requested_chunk_seconds = max(60, int(chunk_seconds))
+        except (TypeError, ValueError):
+            requested_chunk_seconds = max(60, int(COLAB_CHUNK_SECONDS))
+        try:
+            cached_total_chunks = int(cached_item.get("total_chunks", 0) or 0)
+        except (TypeError, ValueError):
+            cached_total_chunks = 0
+        try:
+            cached_file_size = int(cached_item.get("file_size", 0) or 0)
+        except (TypeError, ValueError):
+            cached_file_size = 0
+        try:
+            cached_file_mtime = float(cached_item.get("file_mtime", 0.0) or 0.0)
+        except (TypeError, ValueError):
+            cached_file_mtime = 0.0
+
+        signature_mismatch = False
+        if cached_chunk_seconds and cached_chunk_seconds != requested_chunk_seconds:
+            signature_mismatch = True
+        if cached_total_chunks and cached_total_chunks != int(chunk_total):
+            signature_mismatch = True
+        if cached_file_size > 0 and file_size > 0 and cached_file_size != int(file_size):
+            signature_mismatch = True
+        if cached_file_mtime > 0 and file_mtime > 0 and abs(cached_file_mtime - float(file_mtime)) > 1.0:
+            signature_mismatch = True
+
+        if signature_mismatch:
+            partial_map.pop(item_key, None)
+            self._save_colab_progress_state_snapshot(progress_state)
+            return {}
+
+        completed_chunks_map = cached_item.get("completed_chunks", {})
+        if not isinstance(completed_chunks_map, dict):
+            return {}
+
+        cached_results: dict[int, dict] = {}
+        for chunk in completed_chunks_map.values():
+            if not isinstance(chunk, dict):
+                continue
+            try:
+                chunk_index = int(chunk.get("index", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if chunk_index <= 0 or chunk_index > int(chunk_total):
+                continue
+            result_payload = chunk.get("result", {})
+            if not isinstance(result_payload, dict):
+                continue
+            try:
+                cached_results[chunk_index] = self._normalize_colab_transcribe_payload(result_payload)
+            except Exception:
+                continue
+        return cached_results
+
+    def _record_colab_progress_chunk_completion(
+        self,
+        progress_state: dict,
+        mp3_path: str,
+        chunk_index: int,
+        chunk_total: int,
+        chunk_seconds: int,
+        chunk_offset: float,
+        chunk_duration: float,
+        chunk_result: dict,
+        file_size: int,
+        file_mtime: float,
+    ):
+        if not isinstance(progress_state, dict):
+            return
+        item_key = self._colab_path_key(mp3_path)
+        if not item_key:
+            return
+        partial_map = progress_state.setdefault("partial_map", {})
+        if not isinstance(partial_map, dict):
+            return
+
+        try:
+            chunk_index = int(chunk_index)
+        except (TypeError, ValueError):
+            return
+        if chunk_index <= 0:
+            return
+
+        normalized_result = self._normalize_colab_transcribe_payload(chunk_result if isinstance(chunk_result, dict) else {})
+        chunk_seconds = max(60, int(chunk_seconds))
+        chunk_total = max(0, int(chunk_total))
+        file_size = max(0, int(file_size or 0))
+        file_mtime = max(0.0, float(file_mtime or 0.0))
+
+        partial_item = partial_map.setdefault(
+            item_key,
+            {
+                "mp3_path": self._normalize_saved_folder_path(mp3_path),
+                "chunk_seconds": chunk_seconds,
+                "total_chunks": chunk_total,
+                "file_size": file_size,
+                "file_mtime": file_mtime,
+                "completed_chunks": {},
+                "last_updated": self._colab_now_text(),
+            },
+        )
+        completed_chunks = partial_item.setdefault("completed_chunks", {})
+        if not isinstance(completed_chunks, dict):
+            completed_chunks = {}
+            partial_item["completed_chunks"] = completed_chunks
+
+        completed_chunks[chunk_index] = {
+            "index": chunk_index,
+            "offset": float(max(0.0, chunk_offset)),
+            "duration": float(max(0.0, chunk_duration)),
+            "result": normalized_result,
+            "completed_at": self._colab_now_text(),
         }
-        self._save_colab_progress_payload_safely(str(progress_state.get("path", "") or ""), payload)
+        partial_item["chunk_seconds"] = chunk_seconds
+        partial_item["total_chunks"] = chunk_total
+        partial_item["file_size"] = file_size
+        partial_item["file_mtime"] = file_mtime
+        partial_item["last_updated"] = self._colab_now_text()
+        self._save_colab_progress_state_snapshot(progress_state)
 
     def _collect_colab_runtime_targets(self, runtime_folder: str) -> list[dict]:
         targets: list[dict] = []
@@ -17333,30 +17694,31 @@ class TranscribeGUI(QWidget):
 
         return chunk_infos, chunk_dir
 
-    def _post_colab_transcribe(self, transcribe_url: str, file_path: str) -> dict:
-        body, content_type = self._encode_colab_multipart_file(file_path)
-        req = urllib_request.Request(
-            transcribe_url,
-            data=body,
-            headers={
-                "Accept": "application/json",
-                "Content-Type": content_type,
-                "Cache-Control": "no-cache",
-            },
-            method="POST",
-        )
-        with urllib_request.urlopen(req, timeout=1800) as response:
-            payload_bytes = response.read()
-            charset = response.headers.get_content_charset() or "utf-8"
-
+    def _decode_colab_payload(self, payload_bytes: bytes, charset: str, context: str) -> dict:
         try:
             payload = json.loads(payload_bytes.decode(charset, errors="replace"))
         except json.JSONDecodeError as exc:
-            raise ValueError("Colab 서버 응답이 JSON 형식이 아닙니다.") from exc
+            raise ValueError(f"{context}: JSON 응답 형식이 아닙니다.") from exc
+        if not isinstance(payload, dict):
+            raise ValueError(f"{context}: 응답 형식이 올바르지 않습니다.")
+        return payload
 
+    def _format_colab_http_error(self, exc: urllib_error.HTTPError) -> str:
+        err_text = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
+        body_text = ""
+        try:
+            body_bytes = exc.read()
+            if body_bytes:
+                body_text = body_bytes.decode("utf-8", errors="replace").strip()
+        except Exception:
+            body_text = ""
+        if body_text:
+            return f"{err_text} / {body_text[:400]}"
+        return err_text
+
+    def _normalize_colab_transcribe_payload(self, payload: dict) -> dict:
         if not isinstance(payload, dict):
             raise ValueError("Colab 서버 응답 형식이 올바르지 않습니다.")
-
         if str(payload.get("error", "") or "").strip():
             raise RuntimeError(str(payload.get("error")).strip())
 
@@ -17394,9 +17756,148 @@ class TranscribeGUI(QWidget):
         normalized_payload["language"] = str(payload.get("language", "") or "").strip() or "ko"
         return normalized_payload
 
+    def _post_colab_transcribe(self, transcribe_url: str, file_path: str) -> dict:
+        body, content_type = self._encode_colab_multipart_file(file_path)
+        req = urllib_request.Request(
+            transcribe_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(req, timeout=COLAB_JOB_MAX_WAIT_SECONDS) as response:
+            payload_bytes = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+        payload = self._decode_colab_payload(payload_bytes, charset, "Colab 동기식 전사")
+        return self._normalize_colab_transcribe_payload(payload)
+
+    def _post_colab_job_start(self, job_start_url: str, file_path: str) -> str:
+        body, content_type = self._encode_colab_multipart_file(file_path)
+        req = urllib_request.Request(
+            job_start_url,
+            data=body,
+            headers={
+                "Accept": "application/json",
+                "Content-Type": content_type,
+                "Cache-Control": "no-cache",
+            },
+            method="POST",
+        )
+        with urllib_request.urlopen(req, timeout=COLAB_JOB_START_TIMEOUT) as response:
+            payload_bytes = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+        payload = self._decode_colab_payload(payload_bytes, charset, "Colab job 생성")
+        if str(payload.get("error", "") or "").strip():
+            raise RuntimeError(str(payload.get("error")).strip())
+        job_id = str(payload.get("job_id", "") or "").strip()
+        if not job_id:
+            raise ValueError("Colab job 응답에 job_id가 없습니다.")
+        return job_id
+
+    def _get_colab_job_status_payload(self, job_status_url: str) -> dict:
+        req = urllib_request.Request(
+            job_status_url,
+            headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+            method="GET",
+        )
+        with urllib_request.urlopen(req, timeout=COLAB_JOB_STATUS_TIMEOUT) as response:
+            payload_bytes = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+        return self._decode_colab_payload(payload_bytes, charset, "Colab job 상태 조회")
+
+    def _get_colab_job_result_payload(self, job_result_url: str) -> dict:
+        req = urllib_request.Request(
+            job_result_url,
+            headers={"Accept": "application/json", "Cache-Control": "no-cache"},
+            method="GET",
+        )
+        with urllib_request.urlopen(req, timeout=COLAB_JOB_RESULT_TIMEOUT) as response:
+            payload_bytes = response.read()
+            charset = response.headers.get_content_charset() or "utf-8"
+        payload = self._decode_colab_payload(payload_bytes, charset, "Colab job 결과 조회")
+        return self._normalize_colab_transcribe_payload(payload)
+
+    def _wait_colab_job_result(
+        self,
+        raw_colab_url: str,
+        job_id: str,
+        request_id: int,
+        event_name: str,
+        chunk_idx: int,
+        chunk_total: int,
+        emit_log,
+        emit_comm_time,
+    ) -> dict:
+        status_url = self._build_colab_job_status_url(raw_colab_url, job_id)
+        result_url = self._build_colab_job_result_url(raw_colab_url, job_id)
+        if not status_url or not result_url:
+            raise RuntimeError("Colab job 상태/결과 URL 생성 실패")
+
+        last_status = ""
+        started_at = time.time()
+        poll_errors = 0
+
+        while True:
+            if int(request_id) != int(self._colab_run_request_id):
+                raise RuntimeError("현재 요청이 갱신되어 조각 폴링을 중단합니다.")
+            if time.time() - started_at > float(COLAB_JOB_MAX_WAIT_SECONDS):
+                raise TimeoutError(
+                    f"Colab job 폴링 시간 초과({int(COLAB_JOB_MAX_WAIT_SECONDS)}초): "
+                    f"{event_name} {chunk_idx}/{chunk_total}, job_id={job_id}"
+                )
+
+            try:
+                status_payload = self._get_colab_job_status_payload(status_url)
+                emit_comm_time()
+                poll_errors = 0
+            except urllib_error.HTTPError as exc:
+                poll_errors += 1
+                if poll_errors >= int(COLAB_JOB_POLL_MAX_ERRORS):
+                    raise RuntimeError(
+                        f"Colab job 상태 조회 반복 실패({poll_errors}/{COLAB_JOB_POLL_MAX_ERRORS}): "
+                        f"{self._format_colab_http_error(exc)}"
+                    ) from exc
+                time.sleep(float(COLAB_JOB_POLL_SECONDS))
+                continue
+            except (TimeoutError, urllib_error.URLError, OSError, ValueError) as exc:
+                poll_errors += 1
+                if poll_errors >= int(COLAB_JOB_POLL_MAX_ERRORS):
+                    raise RuntimeError(
+                        f"Colab job 상태 조회 반복 실패({poll_errors}/{COLAB_JOB_POLL_MAX_ERRORS}): {exc}"
+                    ) from exc
+                time.sleep(float(COLAB_JOB_POLL_SECONDS))
+                continue
+
+            status = str(status_payload.get("status", "") or "").strip().lower()
+            if status != last_status:
+                emit_log(
+                    f"[GUI] Colab job 상태: {event_name} ({chunk_idx}/{chunk_total}), "
+                    f"job_id={job_id}, status={status or 'unknown'}\n"
+                )
+                last_status = status
+
+            if status in {"done", "completed", "success"}:
+                break
+            if status in {"failed", "error", "cancelled", "canceled"}:
+                err_text = str(status_payload.get("error", "") or "").strip() or status
+                raise RuntimeError(
+                    f"Colab job 실패: {event_name} ({chunk_idx}/{chunk_total}), job_id={job_id}, "
+                    f"status={status}, error={err_text}"
+                )
+
+            time.sleep(float(COLAB_JOB_POLL_SECONDS))
+
+        result_payload = self._get_colab_job_result_payload(result_url)
+        emit_comm_time()
+        return result_payload
+
     def _start_colab_transcribe_run(self, runtime_folder: str) -> bool:
         colab_url = str(self.input_colab_url.text() or "").strip()
-        transcribe_url = self._build_colab_transcribe_url(colab_url)
+        job_start_url = self._build_colab_job_start_url(colab_url)
+        legacy_transcribe_url = self._build_colab_transcribe_url(colab_url)
         if not self.btn_colab_check.property("connected"):
             self.show_info_message("알림", "Colab 연결을 먼저 확인해 주세요.")
             self.set_transcribe_buttons_enabled(True)
@@ -17404,7 +17905,7 @@ class TranscribeGUI(QWidget):
             self.selected_run_items = []
             return False
 
-        if not transcribe_url:
+        if not job_start_url:
             self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
             self.set_transcribe_buttons_enabled(True)
             self._sync_selected_runtime_outputs()
@@ -17445,7 +17946,7 @@ class TranscribeGUI(QWidget):
 
         worker = threading.Thread(
             target=self._run_colab_transcribe_worker,
-            args=(request_id, transcribe_url, run_targets, progress_state),
+            args=(request_id, colab_url, job_start_url, legacy_transcribe_url, run_targets, progress_state),
             daemon=True,
         )
         worker.start()
@@ -17454,7 +17955,9 @@ class TranscribeGUI(QWidget):
     def _run_colab_transcribe_worker(
         self,
         request_id: int,
-        transcribe_url: str,
+        raw_colab_url: str,
+        job_start_url: str,
+        legacy_transcribe_url: str,
         run_targets: list[dict],
         progress_state: dict | None = None,
     ):
@@ -17473,16 +17976,55 @@ class TranscribeGUI(QWidget):
         def _emit_log(text: str):
             self._colab_run_bridge.log_line.emit(str(text or ""))
 
+        def _merge_chunk_result(
+            chunk_result: dict,
+            chunk_offset: float,
+            merged_text_parts: list[str],
+            merged_segments: list[dict],
+            merged_language_value: str,
+        ) -> str:
+            language_value = merged_language_value
+            if not language_value:
+                language_value = str(chunk_result.get("language", "") or "").strip() or "ko"
+
+            chunk_text = str(chunk_result.get("text", "") or "").strip()
+            if chunk_text:
+                merged_text_parts.append(chunk_text)
+
+            for seg in (chunk_result.get("segments", []) or []):
+                if not isinstance(seg, dict):
+                    continue
+                seg_text = str(seg.get("text", "") or "").strip()
+                if not seg_text:
+                    continue
+                seg_start = self._colab_safe_seconds(seg.get("start", 0.0), default=0.0) + chunk_offset
+                seg_end = self._colab_safe_seconds(seg.get("end", 0.0), default=seg_start) + chunk_offset
+                if seg_end < seg_start:
+                    seg_end = seg_start
+                merged_segments.append(
+                    {
+                        "id": len(merged_segments),
+                        "start": seg_start,
+                        "end": seg_end,
+                        "text": seg_text,
+                    }
+                )
+            return language_value
+
         try:
             total = len(run_targets)
             _emit_event("TOTAL_FILES", total, 0, total)
 
             if total <= 0:
-                _emit_event("ALL_DONE")
+                _emit_event("ALL_DONE", 0, 0, 0)
                 self._colab_run_bridge.finished.emit(int(request_id), "done", "")
                 return
 
+            success_count = 0
+            failed_count = 0
+            use_legacy_sync = False
             stopped = False
+
             for idx, target in enumerate(run_targets, start=1):
                 if int(request_id) != int(self._colab_run_request_id):
                     return
@@ -17492,9 +18034,11 @@ class TranscribeGUI(QWidget):
 
                 runtime_mp3 = str(target.get("runtime_mp3", "") or "").strip()
                 event_name = _safe_token(target.get("event_name", os.path.basename(runtime_mp3)))
+                source_mp3 = self._normalize_saved_folder_path(target.get("source_mp3", "")) or runtime_mp3
                 if not runtime_mp3 or not os.path.isfile(runtime_mp3):
                     _emit_event("FILE_FAIL", event_name, "파일을 찾을 수 없습니다.")
                     _emit_log(f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계=파일 확인, 경로={runtime_mp3}\n")
+                    failed_count += 1
                     if self._colab_stop_after_current:
                         stopped = True
                         break
@@ -17504,10 +18048,7 @@ class TranscribeGUI(QWidget):
                 stage = "분할 준비"
                 chunk_dir = ""
                 try:
-                    try:
-                        file_size = os.path.getsize(runtime_mp3)
-                    except OSError:
-                        file_size = 0
+                    file_size, file_mtime = self._colab_file_signature(runtime_mp3)
                     _emit_log(f"[GUI] Colab 요청 시작: {event_name} ({file_size} bytes)\n")
 
                     stage = "MP3 분할"
@@ -17524,6 +18065,18 @@ class TranscribeGUI(QWidget):
                     merged_segments: list[dict] = []
                     merged_text_parts: list[str] = []
                     merged_language = ""
+                    cached_chunk_results = self._get_colab_cached_chunk_results(
+                        progress_state or {},
+                        source_mp3,
+                        chunk_total,
+                        int(COLAB_CHUNK_SECONDS),
+                        int(file_size),
+                        float(file_mtime),
+                    )
+                    if cached_chunk_results:
+                        _emit_log(
+                            f"[GUI] Colab 조각 재사용: {event_name} / {len(cached_chunk_results)}개 조각 복구됨\n"
+                        )
 
                     for chunk_idx, chunk in enumerate(chunk_infos, start=1):
                         if int(request_id) != int(self._colab_run_request_id):
@@ -17537,36 +18090,69 @@ class TranscribeGUI(QWidget):
 
                         chunk_path = str(chunk.get("path", "") or "").strip()
                         chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
-                        stage = f"조각 전송 {chunk_idx}/{chunk_total}"
+                        chunk_duration = self._colab_safe_seconds(chunk.get("duration", 0.0), default=0.0)
+                        stage = f"조각 처리 {chunk_idx}/{chunk_total}"
 
-                        chunk_result = self._post_colab_transcribe(transcribe_url, chunk_path)
-                        _emit_comm_time()
+                        chunk_result = cached_chunk_results.get(chunk_idx)
+                        if chunk_result is None:
+                            stage = f"조각 job 생성 {chunk_idx}/{chunk_total}"
+                            try:
+                                if use_legacy_sync:
+                                    if not legacy_transcribe_url:
+                                        raise RuntimeError("동기식 폴백 URL이 비어 있습니다.")
+                                    chunk_result = self._post_colab_transcribe(legacy_transcribe_url, chunk_path)
+                                    _emit_comm_time()
+                                else:
+                                    job_id = self._post_colab_job_start(job_start_url, chunk_path)
+                                    _emit_comm_time()
+                                    _emit_log(
+                                        f"[GUI] Colab job 생성: {event_name} ({chunk_idx}/{chunk_total}), job_id={job_id}\n"
+                                    )
+                                    stage = f"조각 job 폴링 {chunk_idx}/{chunk_total}"
+                                    chunk_result = self._wait_colab_job_result(
+                                        raw_colab_url,
+                                        job_id,
+                                        request_id,
+                                        event_name,
+                                        chunk_idx,
+                                        chunk_total,
+                                        _emit_log,
+                                        _emit_comm_time,
+                                    )
+                            except urllib_error.HTTPError as exc:
+                                status_code = int(getattr(exc, "code", 0) or 0)
+                                if (not use_legacy_sync) and status_code in (404, 405) and legacy_transcribe_url:
+                                    use_legacy_sync = True
+                                    _emit_log(
+                                        "[GUI] Colab 서버가 /transcribe/start를 지원하지 않아 동기식 /transcribe로 폴백합니다.\n"
+                                    )
+                                    chunk_result = self._post_colab_transcribe(legacy_transcribe_url, chunk_path)
+                                    _emit_comm_time()
+                                else:
+                                    raise
 
-                        if not merged_language:
-                            merged_language = str(chunk_result.get("language", "") or "").strip() or "ko"
-
-                        chunk_text = str(chunk_result.get("text", "") or "").strip()
-                        if chunk_text:
-                            merged_text_parts.append(chunk_text)
-
-                        for seg in (chunk_result.get("segments", []) or []):
-                            if not isinstance(seg, dict):
-                                continue
-                            seg_text = str(seg.get("text", "") or "").strip()
-                            if not seg_text:
-                                continue
-                            seg_start = self._colab_safe_seconds(seg.get("start", 0.0), default=0.0) + chunk_offset
-                            seg_end = self._colab_safe_seconds(seg.get("end", 0.0), default=seg_start) + chunk_offset
-                            if seg_end < seg_start:
-                                seg_end = seg_start
-                            merged_segments.append(
-                                {
-                                    "id": len(merged_segments),
-                                    "start": seg_start,
-                                    "end": seg_end,
-                                    "text": seg_text,
-                                }
+                            self._record_colab_progress_chunk_completion(
+                                progress_state or {},
+                                source_mp3,
+                                chunk_idx,
+                                chunk_total,
+                                int(COLAB_CHUNK_SECONDS),
+                                chunk_offset,
+                                chunk_duration,
+                                chunk_result,
+                                int(file_size),
+                                float(file_mtime),
                             )
+                        else:
+                            _emit_log(f"[GUI] Colab 조각 재사용 적용: {event_name} ({chunk_idx}/{chunk_total})\n")
+
+                        merged_language = _merge_chunk_result(
+                            chunk_result,
+                            chunk_offset,
+                            merged_text_parts,
+                            merged_segments,
+                            merged_language,
+                        )
 
                         _emit_event("FILE_PROGRESS", event_name, chunk_idx, chunk_total)
                         _emit_log(f"[GUI] Colab 조각 완료: {event_name} ({chunk_idx}/{chunk_total})\n")
@@ -17590,7 +18176,6 @@ class TranscribeGUI(QWidget):
 
                     stage = "결과 파일 저장"
                     txt_path, json_path, srt_path = self._save_colab_result_files(runtime_mp3, merged_result)
-                    source_mp3 = self._normalize_saved_folder_path(target.get("source_mp3", "")) or runtime_mp3
                     self._record_colab_progress_completion(
                         progress_state or {},
                         source_mp3,
@@ -17604,21 +18189,16 @@ class TranscribeGUI(QWidget):
                     _emit_log(f"[GUI] 저장 경로: SRT={srt_path}\n")
                     _emit_event("FILE_DONE", event_name)
                     _emit_log(f"[GUI] Colab 전사 완료: {event_name}\n")
+                    success_count += 1
                 except urllib_error.HTTPError as exc:
-                    err_text = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
+                    err_text = self._format_colab_http_error(exc)
                     _emit_event("FILE_FAIL", event_name, err_text or "HTTP 오류")
                     _emit_log(f"[GUI] Colab 전사 실패: {event_name} / {err_text}\n")
-                    try:
-                        body_bytes = exc.read()
-                        body_text = body_bytes.decode("utf-8", errors="replace").strip() if body_bytes else ""
-                    except Exception:
-                        body_text = ""
-                    if body_text:
-                        _emit_log(f"[GUI] Colab HTTP 응답 본문: {body_text[:400]}\n")
                     _emit_log(
                         f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={err_text}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
+                    failed_count += 1
                 except (TimeoutError, urllib_error.URLError, OSError, ValueError, RuntimeError) as exc:
                     raw_error = str(exc) or "요청 실패"
                     err_text = _safe_token(raw_error)
@@ -17628,6 +18208,7 @@ class TranscribeGUI(QWidget):
                         f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={raw_error}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
+                    failed_count += 1
                 except Exception as exc:
                     raw_error = str(exc) or "알 수 없는 오류"
                     err_text = _safe_token(raw_error)
@@ -17637,6 +18218,7 @@ class TranscribeGUI(QWidget):
                         f"[GUI] Colab 전사 실패 상세: 파일={event_name}, 단계={stage}, 예외={type(exc).__name__}, 메시지={raw_error}\n"
                     )
                     _emit_log(f"[GUI] Colab traceback:\n{traceback.format_exc()}\n")
+                    failed_count += 1
                 finally:
                     if chunk_dir and os.path.isdir(chunk_dir):
                         try:
@@ -17651,13 +18233,29 @@ class TranscribeGUI(QWidget):
                     break
 
             if stopped:
-                _emit_event("ALL_STOPPED")
-                self._colab_run_bridge.finished.emit(int(request_id), "stopped", "")
+                _emit_log(
+                    f"[GUI] {'선택 전사' if self.run_mode == 'selected' else '전체 전사'} 루틴 종료(사용자 중지): "
+                    f"성공 {success_count}건 / 실패 {failed_count}건 / 대상 {total}건\n"
+                )
+                _emit_event("ALL_STOPPED", success_count, failed_count, total)
+                self._colab_run_bridge.finished.emit(
+                    int(request_id),
+                    "stopped",
+                    f"success={success_count}, failed={failed_count}, total={total}",
+                )
                 return
 
-            self._remove_colab_progress_file_safely(str((progress_state or {}).get("path", "") or ""))
-            _emit_event("ALL_DONE")
-            self._colab_run_bridge.finished.emit(int(request_id), "done", "")
+            _emit_log(
+                f"[GUI] {'선택 전사' if self.run_mode == 'selected' else '전체 전사'} 루틴 종료: "
+                f"성공 {success_count}건 / 실패 {failed_count}건 / 대상 {total}건\n"
+            )
+            _emit_event("ALL_DONE", success_count, failed_count, total)
+            final_outcome = "done" if failed_count <= 0 else "failed"
+            self._colab_run_bridge.finished.emit(
+                int(request_id),
+                final_outcome,
+                f"success={success_count}, failed={failed_count}, total={total}",
+            )
         except Exception as exc:
             _emit_log(
                 f"[GUI] Colab 워커 치명 오류: 단계=워커 루프, 예외={type(exc).__name__}, 메시지={str(exc)}\n"
@@ -17699,6 +18297,11 @@ class TranscribeGUI(QWidget):
             progress_path = self._colab_progress_path_for_runtime(self.target_folder)
             self._remove_colab_progress_file_safely(progress_path)
             self._clear_colab_resume_state()
+        elif outcome == "failed":
+            self.append_log_text(
+                "[GUI] Colab 전사 루틴 종료: 실패 파일이 있어 progress.json을 유지합니다.\n",
+                force=True,
+            )
 
         if outcome == "error":
             self._set_status_text("오류 발생")
@@ -17712,7 +18315,7 @@ class TranscribeGUI(QWidget):
 
 
     def open_colab_notebook(self):
-        url = "https://colab.research.google.com/github/bongbong90/jeonsa_doumi/blob/main/colab_transcribe.ipynb"
+        url = "https://colab.research.google.com/github/bongbong90/jeonsa_doumi/blob/test/colab-job-api/colab_transcribe.ipynb"
         webbrowser.open(url)
 
     def update_colab_last_comm(self, timestamp_str):
@@ -24035,13 +24638,17 @@ class TranscribeGUI(QWidget):
 
 
         elif evt == "ALL_STOPPED":
-
-
-
-
-
             self._set_status_text("\uC0AC\uC6A9\uC790 \uC911\uC9C0\uB428")
             self._mark_processing_rows_as_stop()
+            stopped_success = int(payload[0]) if len(payload) >= 1 and payload[0].isdigit() else len(self.completed_files)
+            stopped_failed = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
+            stopped_total = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else self.total_target_mp3_files
+            if stopped_total <= 0:
+                stopped_total = max(stopped_success + stopped_failed, self.total_target_mp3_files)
+            stop_label = "선택 전사" if self.run_mode == "selected" else "전체 전사"
+            self.append_log_text(
+                f"[GUI] {stop_label} 루틴 종료(사용자 중지): 성공 {stopped_success}건 / 실패 {stopped_failed}건 / 대상 {stopped_total}건\n"
+            )
 
 
 
@@ -24085,173 +24692,66 @@ class TranscribeGUI(QWidget):
 
 
         elif evt == "ALL_DONE":
-
-
-
-
-
             self.append_log_text(f"[GUI] ALL_DONE 감지, run_mode={self.run_mode}\n")
-
-
-
-
+            success_count = int(payload[0]) if len(payload) >= 1 and payload[0].isdigit() else len(self.completed_files)
+            failed_count = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
+            total_count = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else self.total_target_mp3_files
+            if total_count <= 0:
+                total_count = max(success_count + failed_count, self.total_target_mp3_files)
+            run_label = "선택 전사" if self.run_mode == "selected" else "전체 전사"
+            self.append_log_text(
+                f"[GUI] {run_label} 루틴 종료: 성공 {success_count}건 / 실패 {failed_count}건 / 대상 {total_count}건\n"
+            )
 
             _is_selected = self.run_mode == "selected"
 
-
-
-
-
-            _done_status = "선택 전사 완료" if _is_selected else "전체 전사 완료"
-
-
-
-
-
-            _done_title = "선택 전사 완료" if _is_selected else "전체 전사 완료"
-
-
-
-
-
-            _done_msg = "선택한 MP3 전사가 완료되었습니다." if _is_selected else "전체 전사가 완료되었습니다."
-
-
-
-
-
-            self._append_user_log("선택 전사 완료" if _is_selected else "전체 전사 완료", "done")
-
-
-
-
-
-            self._set_status_text(_done_status)
-
-
-
-
-
-            if self.last_completed_file_name:
-
-
-
-
-
-                self._set_current_file_text(self.last_completed_file_name)
-
-
-
-
-
-            else:
-
-
-
-
-
-                self._set_current_file_text("없음")
-
-
-
-
-
             self.current_file_name = ""
-
-
-
-
-
             self.current_file_started_at = None
             self.run_current_audio_seconds = 0.0
-
-
-
-
-
-            self._set_eta_value(self.label_current_eta, "완료")
-
-
-
-
-
-            self._set_eta_value(self.label_total_eta, "완료")
-
-
-
-
-
             self.update_total_progress_display()
-
-
-
-
-
             self.update_session_label()
 
+            if failed_count > 0:
+                if success_count > 0:
+                    self._set_status_text("전사 일부 실패")
+                else:
+                    self._set_status_text("전사 실패")
+                self._append_user_log(
+                    f"{'선택' if _is_selected else '전체'} 전사 루틴 종료 (성공 {success_count} / 실패 {failed_count})",
+                    "error",
+                )
+                if self.last_completed_file_name and success_count > 0:
+                    self._set_current_file_text(self.last_completed_file_name)
+                else:
+                    self._set_current_file_text("없음")
+                self._set_eta_value(self.label_current_eta, ETA_EMPTY_TEXT)
+                self._set_eta_value(self.label_total_eta, "종료")
+                return True
 
+            _done_status = "선택 전사 완료" if _is_selected else "전체 전사 완료"
+            _done_title = "선택 전사 완료" if _is_selected else "전체 전사 완료"
+            _done_msg = "선택한 MP3 전사가 완료되었습니다." if _is_selected else "전체 전사가 완료되었습니다."
 
+            self._append_user_log("선택 전사 완료" if _is_selected else "전체 전사 완료", "done")
+            self._set_status_text(_done_status)
 
+            if self.last_completed_file_name:
+                self._set_current_file_text(self.last_completed_file_name)
+            else:
+                self._set_current_file_text("없음")
+
+            self._set_eta_value(self.label_current_eta, "완료")
+            self._set_eta_value(self.label_total_eta, "완료")
 
             if self.chk_notify_total.isChecked() and not self.total_complete_notified:
-
-
-
-
-
                 self.notify_with_toast(
-
-
-
-
-
                     _done_title,
-
-
-
-
-
                     _done_msg,
-
-
-
-
-
                     progress_percent=100,
-
-
-
-
-
                     current_file="",
-
-
-
-
-
                     timeout_ms=7600,
-
-
-
-
-
                 )
-
-
-
-
-
                 self.total_complete_notified = True
-
-
-
-
-
-            
-
-
-
-
 
             self._queue_shutdown_prompt_after_completion("ALL_DONE")
 
