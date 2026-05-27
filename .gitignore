@@ -43,3 +43,7 @@ gui_main_recovered.py
 
 .DS_Store
 Thumbs.db
+
+docs/logs/
+docs/screenshots/
+pyrightconfig.json
