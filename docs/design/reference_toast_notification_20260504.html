@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+
+<html class="light" lang="ko"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;900&amp;family=Inter:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+      tailwind.config = {
+        darkMode: "class",
+        theme: {
+          extend: {
+            "colors": {
+                    "inverse-primary": "#b6c4ff",
+                    "tertiary-fixed": "#ffdbcb",
+                    "surface-bright": "#faf8ff",
+                    "on-secondary-fixed-variant": "#38485d",
+                    "surface": "#faf8ff",
+                    "error": "#ba1a1a",
+                    "surface-container-highest": "#e3e1e9",
+                    "surface-container-high": "#e9e7ef",
+                    "tertiary": "#4b1c00",
+                    "on-tertiary": "#ffffff",
+                    "on-tertiary-fixed": "#341100",
+                    "on-primary-fixed": "#00164e",
+                    "on-background": "#1a1b21",
+                    "inverse-surface": "#2f3036",
+                    "surface-tint": "#4059aa",
+                    "primary-container": "#1e3a8a",
+                    "secondary-fixed-dim": "#b7c8e1",
+                    "outline-variant": "#c5c5d3",
+                    "outline": "#757682",
+                    "secondary-fixed": "#d3e4fe",
+                    "on-error": "#ffffff",
+                    "on-surface": "#1a1b21",
+                    "on-secondary-container": "#54647a",
+                    "on-error-container": "#93000a",
+                    "secondary-container": "#d0e1fb",
+                    "surface-container": "#eeedf4",
+                    "inverse-on-surface": "#f1f0f7",
+                    "primary-fixed-dim": "#b6c4ff",
+                    "background": "#faf8ff",
+                    "on-tertiary-fixed-variant": "#773205",
+                    "on-primary": "#ffffff",
+                    "on-surface-variant": "#444651",
+                    "surface-container-low": "#f4f3fa",
+                    "secondary": "#505f76",
+                    "surface-variant": "#e3e1e9",
+                    "on-secondary": "#ffffff",
+                    "error-container": "#ffdad6",
+                    "primary-fixed": "#dce1ff",
+                    "on-secondary-fixed": "#0b1c30",
+                    "surface-dim": "#dad9e1",
+                    "on-tertiary-container": "#f39461",
+                    "on-primary-fixed-variant": "#264191",
+                    "tertiary-fixed-dim": "#ffb691",
+                    "primary": "#00236f",
+                    "tertiary-container": "#6e2c00",
+                    "on-primary-container": "#90a8ff",
+                    "surface-container-lowest": "#ffffff"
+            },
+            "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+            },
+            "spacing": {
+                    "xs": "8px",
+                    "gutter": "20px",
+                    "md": "24px",
+                    "sidebar_width": "280px",
+                    "sm": "16px",
+                    "base": "4px",
+                    "lg": "40px"
+            },
+            "fontFamily": {
+                    "log-text": ["Inter"],
+                    "body-lg": ["Inter"],
+                    "body-md": ["Inter"],
+                    "display-metrics": ["Public Sans"],
+                    "label-caps": ["Public Sans"],
+                    "headline-sm": ["Public Sans"]
+            },
+            "fontSize": {
+                    "log-text": ["15px", {"lineHeight": "28px", "letterSpacing": "-0.01em", "fontWeight": "400"}],
+                    "body-lg": ["16px", {"lineHeight": "26px", "fontWeight": "400"}],
+                    "body-md": ["14px", {"lineHeight": "22px", "fontWeight": "400"}],
+                    "display-metrics": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                    "label-caps": ["12px", {"lineHeight": "16px", "fontWeight": "700"}],
+                    "headline-sm": ["20px", {"lineHeight": "28px", "fontWeight": "600"}]
+            }
+          },
+        },
+      }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+            display: inline-block;
+            vertical-align: middle;
+        }
+        /* Custom Document Motif for Background */
+        .document-motif {
+            background-image: linear-gradient(to bottom, transparent 31px, #e2e8f0 32px);
+            background-size: 100% 32px;
+        }
+        /* Glassmorphism/Shadow override for Windows-style Toast */
+        .system-toast-shadow {
+            box-shadow: 0px 10px 25px rgba(0,0,0, 0.05);
+        }
+    </style>
+</head>
+<body class="bg-surface-dim font-body-md text-on-surface flex items-end justify-end min-h-screen p-lg">
+<!-- Windows System Tray Notification Mockup -->
+<div class="w-[360px] bg-white rounded-lg border border-outline-variant overflow-hidden system-toast-shadow font-['Public_Sans']">
+<!-- Header: TopAppBar Style Mapping -->
+<header class="flex justify-between items-center px-sm py-xs bg-white border-b border-slate-100">
+<div class="flex items-center gap-xs">
+<img alt="전사도우미 앱 아이콘" class="w-5 h-5 rounded-sm" data-alt="A professional and clean minimalist app icon for '전사도우미'. The logo features a stylized deep blue wave motif on a pristine white background, representing sound turning into text. The aesthetic is corporate and modern, utilizing the primary blue color palette and sharp, precise edges to convey trustworthiness and technical accuracy." src="https://lh3.googleusercontent.com/aida-public/AB6AXuDn6X5Cxa1URafdmzPYNjXhwmwtt9idYPiyksCGdGCL24jbPD3CoXDy0_w_y2lJXV-1d8Djc5bnMMLFlcD07S4eOk0wxwNhI0I7apqpTf7i6pWdo5yM6YYXpQoXZwzc7R_o7TsTTkCNtuiTMea-fK5LveC3oliiQJiuYtfmhyQXndMyDnx-spyxol3FPwYNn_4Js8qJTJ8NfTcX_VNSAcGjyJUU9WqK3hWiAzWzYUQg0WOA_-rKrRIvts9YnnY9aGDz2Rna1XD9htk"/>
+<span class="text-label-caps font-headline-sm text-primary">전사도우미</span>
+</div>
+<button class="text-outline hover:text-on-surface transition-colors">
+<span class="material-symbols-outlined text-[18px]">close</span>
+</button>
+</header>
+<!-- Content Area -->
+<div class="p-sm flex flex-col gap-sm relative">
+<!-- Background Motif (Subtle Horizontal Lines) -->
+<div class="absolute inset-0 document-motif opacity-20 pointer-events-none"></div>
+<div class="relative z-10">
+<div class="flex items-start justify-between mb-xs">
+<div>
+<h2 class="font-headline-sm text-headline-sm text-primary mb-base">전사 진행 중</h2>
+<p class="text-body-md text-on-surface-variant">현재 파일: interview_01.mp3</p>
+</div>
+<span class="material-symbols-outlined text-primary-container" style="font-variation-settings: 'FILL' 1;">description</span>
+</div>
+<!-- Progress Section -->
+<div class="space-y-base mt-sm">
+<div class="flex justify-between items-center text-label-caps text-on-secondary-fixed-variant">
+<span>전체 진행률</span>
+<span class="font-bold">80%</span>
+</div>
+<!-- Audio Waveform Integration Motif -->
+<div class="h-2 w-full bg-secondary-fixed rounded-full overflow-hidden flex items-center">
+<div class="h-full bg-primary transition-all" style="width: 80%;"></div>
+<!-- Needle indicator visual -->
+<div class="w-1 h-4 bg-primary-container"></div>
+</div>
+</div>
+</div>
+</div>
+<!-- Footer Actions -->
+<footer class="bg-surface-container-low p-sm flex justify-end gap-xs border-t border-slate-100">
+<button class="px-sm py-xs border border-outline rounded-lg text-label-caps text-on-surface-variant hover:bg-slate-100 transition-all flex items-center gap-base">
+<span class="material-symbols-outlined text-[16px]">folder_open</span>
+<span>폴더 열기</span>
+</button>
+<button class="px-sm py-xs bg-primary text-white rounded-lg text-label-caps font-bold hover:opacity-90 active:opacity-80 transition-all">
+<span>확인</span>
+</button>
+</footer>
+</div>
+<!-- Hidden Shell for Navigation Context (As per mandates, but suppressed for Transactional/Toast UI) -->
+<!-- The prompt asked for a System Tray Notification specifically, which is a sub-page/focused journey, thus Nav Shells are suppressed -->
+</body></html>
