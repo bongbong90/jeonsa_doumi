@@ -650,6 +650,33 @@ def detect_fp16_setting() -> tuple[bool, str]:
         return False, "vram check failed"
 
 
+def is_fp16_retryable_error(exc: Exception) -> bool:
+    """fp16 관련 오류인지 판단한다.
+
+    예외 메시지에 CUDA/OOM/half precision 관련 키워드가 포함되면 True.
+    파일 경로/권한 오류 등 fp16과 무관한 오류는 False.
+    판단 함수 자체에서 예외가 나면 False 반환.
+    """
+    try:
+        if isinstance(exc, (FileNotFoundError, PermissionError, IsADirectoryError)):
+            return False
+        msg = str(exc).lower()
+        keywords = (
+            "cuda",
+            "out of memory",
+            "oom",
+            "half",
+            "fp16",
+            "float16",
+            "cublas",
+            "cudnn",
+            "not implemented for 'half'",
+        )
+        return any(kw in msg for kw in keywords)
+    except Exception:
+        return False
+
+
 # --------------------------------------------------
 # SRT 저장
 # --------------------------------------------------
@@ -757,7 +784,20 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
     if prompt_text:
         transcribe_kwargs["initial_prompt"] = prompt_text
 
-    result = model.transcribe(audio_path, **transcribe_kwargs)
+    try:
+        result = model.transcribe(audio_path, **transcribe_kwargs)
+    except Exception as transcribe_exc:
+        if fp16_enabled and is_fp16_retryable_error(transcribe_exc):
+            log(f"[QUALITY] fp16 transcribe failed, retrying with fp16=False: {transcribe_exc}")
+            transcribe_kwargs["fp16"] = False
+            try:
+                result = model.transcribe(audio_path, **transcribe_kwargs)
+                log("[QUALITY] fp16 fallback succeeded")
+            except Exception as fallback_exc:
+                log(f"[QUALITY] fp16 fallback failed: {fallback_exc}")
+                raise fallback_exc
+        else:
+            raise
     corrections = load_corrections(subject)
     result, replacement_count = apply_corrections_to_result(result, corrections)
     log(f"[QUALITY] corrections applied replacements={replacement_count}")
