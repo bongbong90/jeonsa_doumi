@@ -620,6 +620,36 @@ def load_whisper_model():
     return _whisper_model
 
 
+def detect_fp16_setting() -> tuple[bool, str]:
+    """CUDA/VRAM 상태를 확인하여 fp16 사용 여부를 자동 판단한다.
+
+    Returns:
+        (fp16_enabled, reason): fp16 사용 여부와 판단 근거 문자열.
+        어떤 예외가 발생해도 (False, reason)을 반환하며 전사를 중단하지 않는다.
+    """
+    try:
+        import torch
+    except Exception:
+        return False, "torch unavailable"
+
+    try:
+        if not torch.cuda.is_available():
+            return False, "cuda unavailable"
+    except Exception:
+        return False, "cuda check failed"
+
+    try:
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_bytes = torch.cuda.get_device_properties(0).total_memory
+        vram_gb = vram_bytes / (1024 ** 3)
+        if vram_gb >= 6.0:
+            return True, f"gpu={gpu_name} vram_gb={vram_gb:.2f}"
+        else:
+            return False, f"gpu={gpu_name} vram_gb={vram_gb:.2f} (below 6GB)"
+    except Exception:
+        return False, "vram check failed"
+
+
 # --------------------------------------------------
 # SRT 저장
 # --------------------------------------------------
@@ -716,9 +746,12 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
         log("[QUALITY] subject detected: unknown")
     prompt_text, _prompt_name = load_initial_prompt(subject)
 
+    fp16_enabled, fp16_reason = detect_fp16_setting()
+    log(f"[QUALITY] fp16 auto: {fp16_reason} -> fp16={fp16_enabled}")
+
     transcribe_kwargs = {
         "verbose": False,
-        "fp16": False,
+        "fp16": fp16_enabled,
         "language": "ko",
     }
     if prompt_text:
