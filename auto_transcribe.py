@@ -756,9 +756,64 @@ def save_result_files(audio_path: str, result: dict):
 
 
 # --------------------------------------------------
+# Google Drive 업로드
+# --------------------------------------------------
+def _try_drive_upload(audio_path: str, file_name: str):
+    """전사 완료된 파일 번들을 Google Drive에 업로드한다.
+
+    lazy import로 google_drive_uploader를 로드하며,
+    어떤 예외가 발생해도 로컬 전사 결과에는 영향을 주지 않는다.
+    """
+    try:
+        import google_drive_uploader
+    except ImportError as e:
+        log(f"[WARN] Google Drive 업로드 모듈 import 실패: {e}")
+        emit_event("DRIVE_UPLOAD_FAIL", file_name, f"모듈 없음: {type(e).__name__}")
+        return
+
+    emit_event("DRIVE_UPLOAD_START", file_name)
+    emit_event("FILE_PROGRESS", file_name, 97, "Google Drive 업로드 중")
+
+    try:
+        # 분류 검증 (Drive 접근 전 차단 판단)
+        classification = google_drive_uploader.validate_upload_classification(audio_path)
+        if not classification["ok"]:
+            reasons = ", ".join(classification["reasons"])
+            log(f"[WARN] Drive 업로드 차단: {file_name} ({reasons})")
+            emit_event("DRIVE_UPLOAD_BLOCKED", file_name, reasons)
+            return
+
+        # Drive 서비스 생성 및 업로드
+        service = google_drive_uploader.build_drive_service()
+        result = google_drive_uploader.upload_transcription_bundle(
+            audio_path, include_mp3=True, service=service
+        )
+
+        if result.get("blocked"):
+            errors = "; ".join(result.get("errors", []))
+            log(f"[WARN] Drive 업로드 차단: {file_name} ({errors})")
+            emit_event("DRIVE_UPLOAD_BLOCKED", file_name, errors)
+            return
+
+        if result.get("ok"):
+            uploaded_count = len(result.get("files", []))
+            drive_path = " / ".join(result.get("drive_path", []))
+            log(f"[DONE] Drive 업로드 완료: {file_name} ({uploaded_count}개 파일 -> {drive_path})")
+            emit_event("DRIVE_UPLOAD_DONE", file_name, uploaded_count)
+        else:
+            errors = "; ".join(result.get("errors", []))
+            log(f"[WARN] Drive 업로드 실패: {file_name} ({errors})")
+            emit_event("DRIVE_UPLOAD_FAIL", file_name, errors)
+
+    except Exception as e:
+        log(f"[WARN] Drive 업로드 중 예외 발생: {file_name} ({type(e).__name__}: {e})")
+        emit_event("DRIVE_UPLOAD_FAIL", file_name, f"{type(e).__name__}: {e}")
+
+
+# --------------------------------------------------
 # 전사
 # --------------------------------------------------
-def transcribe_one_file(audio_path: str, index: int, total_files: int):
+def transcribe_one_file(audio_path: str, index: int, total_files: int, upload_drive: bool = False):
     file_name = os.path.basename(audio_path)
 
     if stop_requested():
@@ -860,6 +915,11 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
     save_result_files(audio_path, result)
     emit_event("FILE_PROGRESS", file_name, 95, "결과 파일 저장 완료")
 
+    # Google Drive 업로드 (옵션이 켜진 경우에만)
+    if upload_drive:
+        _try_drive_upload(audio_path, file_name)
+
+    emit_event("FILE_PROGRESS", file_name, 100, "완료")
     log(f"[DONE] '{file_name}' 전사 완료")
     RUN_COMPLETED_FILES.add(_normalize_audio_path(audio_path))
     emit_event("FILE_DONE", file_name)
@@ -887,7 +947,7 @@ def find_mp3_files(target_folder: str) -> list[str]:
     return files
 
 
-def process_folder(target_folder: str):
+def process_folder(target_folder: str, upload_drive: bool = False):
     abs_target = os.path.abspath(target_folder)
 
     if not os.path.isdir(abs_target):
@@ -983,7 +1043,7 @@ def process_folder(target_folder: str):
                 emit_event("FILE_SKIP", file_name)
                 continue
 
-            result = transcribe_one_file(audio_path, idx, total_files)
+            result = transcribe_one_file(audio_path, idx, total_files, upload_drive=upload_drive)
             if result == "stopped":
                 emit_event("ALL_STOPPED")
                 return
@@ -1049,12 +1109,29 @@ def main():
         except locale.Error:
             pass
 
-        if len(sys.argv) < 2:
-            print("사용법: python auto_transcribe.py <전사자료 폴더>", flush=True)
-            sys.exit(1)
+        import argparse
 
-        target_folder = sys.argv[1]
-        process_folder(target_folder)
+        parser = argparse.ArgumentParser(
+            description="MP3 파일을 Whisper로 전사합니다.",
+            add_help=True,
+        )
+        parser.add_argument("target_folder", help="전사할 MP3 파일이 있는 폴더 경로")
+        parser.add_argument(
+            "--upload-drive",
+            action="store_true",
+            default=False,
+            help="전사 완료 후 Google Drive에 업로드합니다 (기본값: 비활성)",
+        )
+
+        args = parser.parse_args()
+
+        if args.upload_drive:
+            log("[INFO] Google Drive 업로드 옵션 활성화")
+
+        process_folder(args.target_folder, upload_drive=args.upload_drive)
+
+    except SystemExit:
+        raise
 
     except Exception as e:
         log("[FATAL] 치명적 오류 발생")
