@@ -780,6 +780,12 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
         "verbose": False,
         "fp16": fp16_enabled,
         "language": "ko",
+        "task": "transcribe",
+        "temperature": 0,
+        "beam_size": 5,
+        "best_of": 5,
+        "patience": 1.0,
+        "condition_on_previous_text": False,
     }
     if prompt_text:
         transcribe_kwargs["initial_prompt"] = prompt_text
