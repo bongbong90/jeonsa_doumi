@@ -40,6 +40,17 @@ STOP_FLAG_PATH = None
 _whisper_model = None
 RUN_COMPLETED_FILES: set[str] = set()
 
+DEFAULT_PROMPT_FILENAME = "default_ko.txt"
+INITIAL_PROMPT_MAX_CHARS = 1800
+PROMPT_FILENAME_BY_SUBJECT = {
+    "부동산학개론": "부동산학개론_이종호.txt",
+    "민법": "민법_김덕수.txt",
+    "공인중개사법": "공인중개사법_정지웅.txt",
+    "부동산공법": "부동산공법_김희상.txt",
+    "부동산공시법": "부동산공시법_박윤모.txt",
+    "부동산세법": "부동산세법_정석진.txt",
+}
+
 
 # --------------------------------------------------
 # 로그 / 이벤트
@@ -137,6 +148,52 @@ def detect_subject_for_audio(audio_path: str) -> str:
     except Exception:
         return ""
     return ""
+
+
+def load_initial_prompt(subject: str) -> tuple[str, str]:
+    try:
+        prompts_dir = find_resource_dir("prompts")
+        if not prompts_dir:
+            log("[QUALITY] prompt missing, continue without initial_prompt")
+            return "", ""
+
+        subject_name = (subject or "").strip()
+        subject_prompt_filename = PROMPT_FILENAME_BY_SUBJECT.get(subject_name, "")
+        prompt_candidates: list[tuple[str, bool]] = []
+
+        if subject_prompt_filename:
+            prompt_candidates.append((subject_prompt_filename, False))
+        prompt_candidates.append((DEFAULT_PROMPT_FILENAME, True))
+
+        seen: set[str] = set()
+        for prompt_filename, is_fallback in prompt_candidates:
+            if prompt_filename in seen:
+                continue
+            seen.add(prompt_filename)
+
+            prompt_path = os.path.join(prompts_dir, prompt_filename)
+            if not os.path.isfile(prompt_path):
+                continue
+
+            try:
+                with open(prompt_path, "r", encoding="utf-8") as f:
+                    prompt_text = f.read().strip()
+                if len(prompt_text) > INITIAL_PROMPT_MAX_CHARS:
+                    prompt_text = prompt_text[:INITIAL_PROMPT_MAX_CHARS].strip()
+
+                if is_fallback:
+                    log(f"[QUALITY] prompt fallback loaded: {prompt_filename} chars={len(prompt_text)}")
+                else:
+                    log(f"[QUALITY] prompt loaded: {prompt_filename} chars={len(prompt_text)}")
+                return prompt_text, prompt_filename
+            except Exception as e:
+                log(f"[QUALITY] prompt load failed: {prompt_filename} ({type(e).__name__}: {e})")
+                continue
+    except Exception as e:
+        log(f"[QUALITY] prompt load failed: {type(e).__name__}: {e}")
+
+    log("[QUALITY] prompt missing, continue without initial_prompt")
+    return "", ""
 
 
 def _normalize_audio_path(path: str) -> str:
@@ -546,12 +603,22 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
     )
 
     # progress_callback 같은 미지원 인자는 사용하지 않음
-    result = model.transcribe(
-        audio_path,
-        verbose=False,
-        fp16=False,
-        language="ko",
-    )
+    subject = detect_subject_for_audio(audio_path)
+    if subject:
+        log(f"[QUALITY] subject detected: {subject}")
+    else:
+        log("[QUALITY] subject detected: unknown")
+    prompt_text, _prompt_name = load_initial_prompt(subject)
+
+    transcribe_kwargs = {
+        "verbose": False,
+        "fp16": False,
+        "language": "ko",
+    }
+    if prompt_text:
+        transcribe_kwargs["initial_prompt"] = prompt_text
+
+    result = model.transcribe(audio_path, **transcribe_kwargs)
 
     if stop_requested():
         log(f"[INFO] stop.flag 감지 - '{file_name}' 결과 저장 전 사용자 중지 요청 확인")
