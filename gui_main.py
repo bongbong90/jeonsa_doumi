@@ -45,6 +45,11 @@ import subprocess
 import tempfile
 import traceback
 
+try:
+    import filename_normalizer as filename_norm
+except ImportError:
+    filename_norm = None
+
 
 
 
@@ -21970,6 +21975,102 @@ class TranscribeGUI(QWidget):
         self.run_mode = "moved"
         self.run_transcribe_process()
 
+    def _build_filename_normalize_plans_for_rows(self, rows: list[dict]) -> list:
+        if filename_norm is None:
+            return []
+        plans = []
+        folders = {}
+        for row in rows:
+            src = self._normalize_saved_folder_path(row.get("source_path", ""))
+            if not src or not os.path.isfile(src):
+                continue
+            parent = os.path.dirname(src)
+            folders.setdefault(parent, []).append((row, src))
+
+        for parent, items in folders.items():
+            folder_plans = filename_norm.preview_folder_renames(parent)
+            plan_map = {p.original_name: p for p in folder_plans}
+            for row, src in items:
+                orig_name = os.path.basename(src)
+                if orig_name in plan_map:
+                    plans.append((row, src, plan_map[orig_name]))
+                else:
+                    p = filename_norm.build_normalize_plan(src)
+                    plans.append((row, src, p))
+        return plans
+
+    def _confirm_auto_filename_normalization(self, plans: list) -> bool:
+        if not plans:
+            return True
+
+        rename_needed = [p for row, src, p in plans if p.needs_rename]
+        if not rename_needed:
+            return True
+
+        errors = [p for p in rename_needed if p.error]
+        conflicts = [p for p in rename_needed if p.conflict]
+
+        msg = "전사 시작 전 파일명을 표준명으로 변경합니다.\n\n"
+        
+        display_count = 0
+        for p in rename_needed:
+            if display_count >= 10:
+                msg += f"...외 {len(rename_needed) - 10}개\n"
+                break
+            msg += f"{p.original_name}\n→ {p.standard_name}\n\n"
+            display_count += 1
+
+        if errors or conflicts:
+            msg += "\n[경고] 자동 변환할 수 없거나 충돌이 예상되는 파일이 있습니다.\n전사를 중단하고 확인해주세요.\n"
+            if errors:
+                msg += f"오류 예: {errors[0].error}\n"
+            if conflicts:
+                msg += "충돌: 이미 동일한 이름의 파일이 존재합니다.\n"
+            self.show_warning_message("파일명 정규화 오류", msg.strip())
+            return False
+
+        msg += "이대로 파일명을 변경하고 전사를 시작하시겠습니까?"
+        
+        reply = QMessageBox.question(
+            self,
+            "파일명 정규화 확인",
+            msg.strip(),
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes
+        )
+        return reply == QMessageBox.StandardButton.Yes
+
+    def _apply_filename_normalization_plans(self, rows: list[dict], plans: list) -> bool:
+        for row, src, p in plans:
+            if not p.needs_rename or p.error or p.conflict:
+                continue
+            
+            dst = p.target_path
+            if not dst or dst == p.original_path:
+                continue
+
+            try:
+                os.replace(src, dst)
+                base_orig = os.path.splitext(src)[0]
+                base_dst = os.path.splitext(dst)[0]
+                for ext in [".txt", ".json", ".srt"]:
+                    if os.path.exists(base_orig + ext):
+                        try:
+                            os.replace(base_orig + ext, base_dst + ext)
+                        except Exception as ex:
+                            self.append_log_text(f"[WARN] 관련 파일 변경 실패: {base_orig+ext} -> {ex}\n", force=True)
+
+                final_name = os.path.basename(dst)
+                row["source_path"] = str(dst)
+                row["filename"] = final_name
+                row["original_filename"] = final_name
+                row["transcribe_name"] = final_name
+            except Exception as e:
+                self.show_warning_message("파일명 정규화 오류", f"파일 이름 변경 중 오류가 발생했습니다.\n{src}\n{e}")
+                return False
+        
+        return True
+
     def start_transcribe_on_target_folder(self):
         if not self.file_queue_rows:
             self.show_warning_message("\uACBD\uACE0", "\uC804\uC0AC\uD560 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uBA3C\uC800 MP3 \uD30C\uC77C\uC744 \uBD88\uB7EC\uC624\uC138\uC694.")
@@ -21981,6 +22082,13 @@ class TranscribeGUI(QWidget):
 
         if not self._confirm_filename_changes(rows_to_run):
             return
+
+        if filename_norm is not None:
+            plans = self._build_filename_normalize_plans_for_rows(rows_to_run)
+            if not self._confirm_auto_filename_normalization(plans):
+                return
+            if not self._apply_filename_normalization_plans(rows_to_run, plans):
+                return
 
         all_items, rename_success, rename_failed = self._prepare_transcribe_items_with_rename(
             rows_to_run,
