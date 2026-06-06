@@ -468,6 +468,7 @@ SETTINGS_KEY_SHUTDOWN_AFTER_DONE = "ui/shutdown_after_done"
 
 
 SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS = "ui/shutdown_wait_seconds"
+SETTINGS_KEY_UPLOAD_DRIVE = "ui/upload_drive"
 SETTINGS_KEY_TRANSCRIPTION_ENGINE = "ui/transcription_engine"
 SETTINGS_KEY_COLAB_URL = "ui/colab_url"
 
@@ -6235,9 +6236,7 @@ class TranscribeGUI(QWidget):
 
         self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
 
-
-
-
+        self.upload_drive_checkbox = QCheckBox("전사 완료 후 Google Drive에 자동 업로드")
 
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
 
@@ -6307,9 +6306,7 @@ class TranscribeGUI(QWidget):
 
         obox.addWidget(self.chk_notify_total)
 
-
-
-
+        obox.addWidget(self.upload_drive_checkbox)
 
         obox.addWidget(self.shutdown_checkbox)
 
@@ -8803,6 +8800,8 @@ class TranscribeGUI(QWidget):
 
         self.chk_notify_total.stateChanged.connect(self.save_ui_preferences)
 
+        self.upload_drive_checkbox.stateChanged.connect(self.save_ui_preferences)
+
 
 
 
@@ -11215,7 +11214,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        for cb in (self.chk_notify_each_file, self.chk_notify_total, self.shutdown_checkbox):
+        for cb in (self.chk_notify_each_file, self.chk_notify_total, self.upload_drive_checkbox, self.shutdown_checkbox):
 
 
 
@@ -13941,6 +13940,7 @@ class TranscribeGUI(QWidget):
 
 
             self.chk_notify_each_file,
+            self.upload_drive_checkbox,
 
 
 
@@ -14714,7 +14714,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        for cb in (self.chk_notify_each_file, self.chk_notify_total, self.shutdown_checkbox):
+        for cb in (self.chk_notify_each_file, self.chk_notify_total, self.upload_drive_checkbox, self.shutdown_checkbox):
 
 
 
@@ -17808,6 +17808,9 @@ class TranscribeGUI(QWidget):
             self.chk_notify_total.setChecked(
                 bool(self.ui_settings.value(SETTINGS_KEY_NOTIFY_TOTAL, True, type=bool))
             )
+            self.upload_drive_checkbox.setChecked(
+                bool(self.ui_settings.value(SETTINGS_KEY_UPLOAD_DRIVE, False, type=bool))
+            )
             self.shutdown_checkbox.setChecked(
                 bool(self.ui_settings.value(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, False, type=bool))
             )
@@ -17862,9 +17865,7 @@ class TranscribeGUI(QWidget):
 
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_TOTAL, self.chk_notify_total.isChecked())
 
-
-
-
+            self.ui_settings.setValue(SETTINGS_KEY_UPLOAD_DRIVE, self.upload_drive_checkbox.isChecked())
 
             self.ui_settings.setValue(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, self.shutdown_checkbox.isChecked())
 
@@ -23866,6 +23867,25 @@ class TranscribeGUI(QWidget):
                 self._set_current_file_text(name)
             self.update_current_file_progress(5, force=True)
 
+        elif evt == "DRIVE_UPLOAD_START":
+            name = payload[0] if payload else "unknown"
+            self.append_log_text(f"[GUI] Google Drive 업로드 시작: {name}\n")
+            
+        elif evt == "DRIVE_UPLOAD_DONE":
+            name = payload[0] if payload else "unknown"
+            count = payload[1] if len(payload) > 1 else "알 수 없음"
+            self.append_log_text(f"[GUI] Google Drive 업로드 완료: {name} ({count}개 파일)\n")
+            
+        elif evt == "DRIVE_UPLOAD_BLOCKED":
+            name = payload[0] if payload else "unknown"
+            msg = payload[1] if len(payload) > 1 else ""
+            self.append_log_text(f"[GUI] Google Drive 업로드 차단: {name} - {msg}\n")
+            
+        elif evt == "DRIVE_UPLOAD_FAIL":
+            name = payload[0] if payload else "unknown"
+            msg = payload[1] if len(payload) > 1 else ""
+            self.append_log_text(f"[GUI] Google Drive 업로드 실패: {name} - {msg}\n")
+
 
 
 
@@ -24563,9 +24583,37 @@ class TranscribeGUI(QWidget):
                 return
             return
 
+        if self.upload_drive_checkbox.isChecked():
+            appdata = os.environ.get("APPDATA")
+            if appdata:
+                cred_path = os.path.join(appdata, "전사도우미", "google_credentials.json")
+                token_path = os.path.join(appdata, "전사도우미", "google_drive_token.json")
+            else:
+                cred_path = os.path.join(os.path.expanduser("~"), ".전사도우미", "google_credentials.json")
+                token_path = os.path.join(os.path.expanduser("~"), ".전사도우미", "google_drive_token.json")
+
+            if not os.path.exists(cred_path) or not os.path.exists(token_path):
+                self.show_warning_message(
+                    "인증 필요",
+                    "Google Drive 업로드를 사용하려면 인증 파일이 필요합니다.\n\n"
+                    "필요한 파일:\n"
+                    f"{cred_path}\n"
+                    f"{token_path}\n\n"
+                    "인증 설정 후 다시 시도하거나, Google Drive 자동 업로드 체크를 해제해 주세요."
+                )
+                self.set_transcribe_buttons_enabled(True)
+                self._sync_selected_runtime_outputs()
+                self.selected_run_items = []
+                return
+
         self.process = QProcess(self)
         self.process.setProgram("python" if getattr(sys, "frozen", False) else sys.executable)
-        self.process.setArguments([auto_path, runtime_folder])
+        
+        args = [auto_path, runtime_folder]
+        if self.upload_drive_checkbox.isChecked():
+            args.append("--upload-drive")
+            
+        self.process.setArguments(args)
         self.process.setWorkingDirectory(self.get_base_dir())
         self.process.readyReadStandardOutput.connect(self.handle_process_stdout)
         self.process.readyReadStandardError.connect(self.handle_process_stderr)
