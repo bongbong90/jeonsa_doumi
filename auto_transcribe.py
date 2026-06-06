@@ -780,6 +780,7 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
     model = load_whisper_model()
 
     log(f"[RUNNING] '{file_name}' 전사 시작...")
+    emit_event("FILE_PROGRESS", file_name, 5, "파일 처리 시작")
     emit_event("START_FILE", file_name)
     update_session_state(
         STATUS_RUNNING,
@@ -801,6 +802,7 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
 
     fp16_enabled, fp16_reason = detect_fp16_setting()
     log(f"[QUALITY] fp16 auto: {fp16_reason} -> fp16={fp16_enabled}")
+    emit_event("FILE_PROGRESS", file_name, 15, "모델 및 옵션 준비 완료")
 
     transcribe_kwargs = {
         "verbose": False,
@@ -817,6 +819,7 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
         transcribe_kwargs["initial_prompt"] = prompt_text
 
     try:
+        emit_event("FILE_PROGRESS", file_name, 20, "Whisper 전사 진행 중")
         result = model.transcribe(audio_path, **transcribe_kwargs)
     except Exception as transcribe_exc:
         if fp16_enabled and is_fp16_retryable_error(transcribe_exc):
@@ -830,9 +833,13 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
                 raise fallback_exc
         else:
             raise
+            
+    emit_event("FILE_PROGRESS", file_name, 75, "Whisper 전사 완료")
+    
     corrections = load_corrections(subject)
     result, replacement_count = apply_corrections_to_result(result, corrections)
     log(f"[QUALITY] corrections applied replacements={replacement_count}")
+    emit_event("FILE_PROGRESS", file_name, 85, "교정 단어 적용 완료")
 
     if stop_requested():
         log(f"[INFO] stop.flag 감지 - '{file_name}' 결과 저장 전 사용자 중지 요청 확인")
@@ -851,6 +858,7 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
         return "stopped"
 
     save_result_files(audio_path, result)
+    emit_event("FILE_PROGRESS", file_name, 95, "결과 파일 저장 완료")
 
     log(f"[DONE] '{file_name}' 전사 완료")
     RUN_COMPLETED_FILES.add(_normalize_audio_path(audio_path))

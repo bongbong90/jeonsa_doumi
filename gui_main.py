@@ -22750,6 +22750,15 @@ class TranscribeGUI(QWidget):
 
 
 
+        if self.toast_window is not None and self.toast_window.isVisible():
+            if self.toast_window.progress_wrap.isVisible():
+                self.toast_window.progress_percent_label.setText(f"{p}%")
+                self.toast_window.progress_bar.setValue(p)
+
+
+
+
+
         if self.current_file_started_at and 0 < p < 100:
 
 
@@ -23835,60 +23844,29 @@ class TranscribeGUI(QWidget):
 
 
         elif evt == "FILE_PROGRESS":
-
-
-
-
-
             name = payload[0] if payload else self.current_file_name
-
-
-
-
-
-            done_chunks = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
-
-
-
-
-
-            total_chunks = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else 0
-
-
-
-
-
-            if name:
-
-
-
-
-
-                self._set_current_file_text(name)
-
-
-
-
-
-            if total_chunks > 0:
-
-
-
-
-
-                percent = max(0, min(100, int(round(done_chunks * 100.0 / total_chunks))))
-
-
-
-
-
+            if len(payload) >= 3 and not payload[2].isdigit():
+                percent_val = int(payload[1]) if payload[1].isdigit() else 0
+                percent = max(0, min(100, percent_val))
+                if name:
+                    self._set_current_file_text(name)
                 self.update_current_file_progress(percent, force=True)
-
-
-
-
-
                 self.update_total_eta_label()
+            else:
+                done_chunks = int(payload[1]) if len(payload) >= 2 and payload[1].isdigit() else 0
+                total_chunks = int(payload[2]) if len(payload) >= 3 and payload[2].isdigit() else 0
+                if name:
+                    self._set_current_file_text(name)
+                if total_chunks > 0:
+                    percent = max(0, min(100, int(round(done_chunks * 100.0 / total_chunks))))
+                    self.update_current_file_progress(percent, force=True)
+                    self.update_total_eta_label()
+
+        elif evt == "START_FILE":
+            name = payload[0] if payload else self.current_file_name
+            if name:
+                self._set_current_file_text(name)
+            self.update_current_file_progress(5, force=True)
 
 
 
