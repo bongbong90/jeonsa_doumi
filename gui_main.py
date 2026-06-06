@@ -21975,6 +21975,36 @@ class TranscribeGUI(QWidget):
         self.run_mode = "moved"
         self.run_transcribe_process()
 
+    def _detect_filename_normalization_hints(self, row: dict, source_path: str) -> dict:
+        hints = {
+            "course_hint": row.get("course"),
+            "subject_hint": row.get("subject"),
+            "week_hint": row.get("week")
+        }
+        
+        path_str = source_path.replace(os.sep, "_").replace("/", "_")
+        
+        if not hints["course_hint"]:
+            c = filename_norm.detect_course_name(path_str)
+            if c != "분류대기":
+                hints["course_hint"] = c
+                
+        if not hints["subject_hint"]:
+            s = filename_norm.detect_subject_name(path_str)
+            if s != "과목불명":
+                hints["subject_hint"] = s
+                
+        if not hints["week_hint"]:
+            w, _, _ = filename_norm.detect_week_lesson(os.path.basename(source_path))
+            if w is not None:
+                hints["week_hint"] = w
+            else:
+                w, _, _ = filename_norm.detect_week_lesson(path_str)
+                if w is not None:
+                    hints["week_hint"] = w
+                    
+        return hints
+
     def _build_filename_normalize_plans_for_rows(self, rows: list[dict]) -> list:
         if filename_norm is None:
             return []
@@ -21988,14 +22018,37 @@ class TranscribeGUI(QWidget):
             folders.setdefault(parent, []).append((row, src))
 
         for parent, items in folders.items():
-            folder_plans = filename_norm.preview_folder_renames(parent)
+            common_course = None
+            common_subject = None
+            common_week = None
+            for row, src in items:
+                hints = self._detect_filename_normalization_hints(row, src)
+                if not common_course and hints["course_hint"]:
+                    common_course = hints["course_hint"]
+                if not common_subject and hints["subject_hint"]:
+                    common_subject = hints["subject_hint"]
+                if not common_week and hints["week_hint"]:
+                    common_week = hints["week_hint"]
+
+            folder_plans = filename_norm.preview_folder_renames(
+                parent,
+                course_hint=common_course,
+                subject_hint=common_subject,
+                week_hint=common_week
+            )
             plan_map = {p.original_name: p for p in folder_plans}
             for row, src in items:
                 orig_name = os.path.basename(src)
                 if orig_name in plan_map:
                     plans.append((row, src, plan_map[orig_name]))
                 else:
-                    p = filename_norm.build_normalize_plan(src)
+                    hints = self._detect_filename_normalization_hints(row, src)
+                    p = filename_norm.build_normalize_plan(
+                        src,
+                        course_hint=hints["course_hint"] or common_course,
+                        subject_hint=hints["subject_hint"] or common_subject,
+                        week_hint=hints["week_hint"] or common_week
+                    )
                     plans.append((row, src, p))
         return plans
 
@@ -22003,12 +22056,21 @@ class TranscribeGUI(QWidget):
         if not plans:
             return True
 
-        rename_needed = [p for row, src, p in plans if p.needs_rename]
+        errors = [p for row, src, p in plans if p.error]
+        conflicts = [p for row, src, p in plans if p.conflict]
+        rename_needed = [p for row, src, p in plans if p.needs_rename and not p.error and not p.conflict]
+
+        if errors or conflicts:
+            msg = "[경고] 파일명 자동 정규화를 진행할 수 없는 파일이 있습니다.\n전사를 중단하고 확인해주세요.\n\n"
+            if errors:
+                msg += f"오류 예: {errors[0].original_name} -> {errors[0].error}\n"
+            if conflicts:
+                msg += f"충돌 예: {conflicts[0].original_name} -> 대상 파일 이미 존재\n"
+            self.show_warning_message("파일명 정규화 오류", msg.strip())
+            return False
+
         if not rename_needed:
             return True
-
-        errors = [p for p in rename_needed if p.error]
-        conflicts = [p for p in rename_needed if p.conflict]
 
         msg = "전사 시작 전 파일명을 표준명으로 변경합니다.\n\n"
         
@@ -22019,15 +22081,6 @@ class TranscribeGUI(QWidget):
                 break
             msg += f"{p.original_name}\n→ {p.standard_name}\n\n"
             display_count += 1
-
-        if errors or conflicts:
-            msg += "\n[경고] 자동 변환할 수 없거나 충돌이 예상되는 파일이 있습니다.\n전사를 중단하고 확인해주세요.\n"
-            if errors:
-                msg += f"오류 예: {errors[0].error}\n"
-            if conflicts:
-                msg += "충돌: 이미 동일한 이름의 파일이 존재합니다.\n"
-            self.show_warning_message("파일명 정규화 오류", msg.strip())
-            return False
 
         msg += "이대로 파일명을 변경하고 전사를 시작하시겠습니까?"
         
