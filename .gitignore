@@ -17,6 +17,9 @@ dist/
 
 *.log
 *.tmp
+.pytest_cache/
+docs/logs/
+docs/screenshots/
 
 transcribe_session_state.json
 transcribe_session_state.json.tmp
