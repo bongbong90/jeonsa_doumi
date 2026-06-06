@@ -417,7 +417,7 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 
 
 ETA_EMPTY_TEXT = "-"
-DEFAULT_WHISPER_TIME_RATIO = 0.5
+DEFAULT_WHISPER_TIME_RATIO = 0.18
 COLAB_CHUNK_SECONDS = 600
 COLAB_PROGRESS_FILENAME = "progress.json"
 
@@ -22766,16 +22766,14 @@ class TranscribeGUI(QWidget):
 
 
             elapsed = max(0.0, time.time() - self.current_file_started_at)
-
-
-
-
-
-            est = max(0.0, (elapsed / (p / 100.0)) - elapsed)
-
-
-
-
+            
+            if self.run_current_audio_seconds > 0:
+                ratio = float(self.duration_eta_ratio) if self.duration_eta_ratio else DEFAULT_WHISPER_TIME_RATIO
+                ratio = max(0.05, min(1.0, ratio))
+                remaining_audio = self.run_current_audio_seconds * (1.0 - (p / 100.0))
+                est = max(0.0, remaining_audio * ratio)
+            else:
+                est = max(0.0, (elapsed / (p / 100.0)) - elapsed)
 
             self.current_eta_seconds = est if self.current_eta_seconds is None else self.current_eta_seconds * 0.7 + est * 0.3
 
@@ -22956,7 +22954,7 @@ class TranscribeGUI(QWidget):
             remaining_current_audio = current_audio * (1.0 - progress_ratio)
 
             ratio = float(self.duration_eta_ratio) if self.duration_eta_ratio else DEFAULT_WHISPER_TIME_RATIO
-            ratio = max(0.05, min(5.0, ratio))
+            ratio = max(0.05, min(1.0, ratio))
 
             if self.current_file_name and self.current_eta_seconds is not None:
                 current_est = max(0.0, float(self.current_eta_seconds))
@@ -23948,7 +23946,7 @@ class TranscribeGUI(QWidget):
                         self.file_duration_history.pop(0)
 
                     if audio_seconds > 0:
-                        observed_ratio = max(0.05, min(5.0, d / audio_seconds))
+                        observed_ratio = max(0.05, min(1.0, d / audio_seconds))
                         if self.duration_eta_ratio_calibrated:
                             self.duration_eta_ratio = self.duration_eta_ratio * 0.7 + observed_ratio * 0.3
                         else:
