@@ -67,6 +67,78 @@ def init_runtime_paths(target_folder: str):
     STOP_FLAG_PATH = os.path.join(parent_dir, STOP_FLAG_FILENAME)
 
 
+def get_runtime_base_dir() -> str:
+    try:
+        if getattr(sys, "frozen", False):
+            executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+            if executable_dir:
+                return executable_dir
+        return os.path.dirname(os.path.abspath(__file__))
+    except Exception:
+        return ""
+
+
+def find_resource_dir(dirname: str) -> str:
+    try:
+        if not dirname:
+            return ""
+
+        base_dirs: list[str] = []
+
+        runtime_base = get_runtime_base_dir()
+        if runtime_base:
+            base_dirs.append(runtime_base)
+
+        if getattr(sys, "frozen", False):
+            executable_dir = os.path.dirname(os.path.abspath(sys.executable))
+            if executable_dir:
+                base_dirs.append(executable_dir)
+
+        meipass_dir = getattr(sys, "_MEIPASS", "")
+        if meipass_dir:
+            base_dirs.append(os.path.abspath(meipass_dir))
+
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if script_dir:
+            base_dirs.append(script_dir)
+
+        seen: set[str] = set()
+        for base_dir in base_dirs:
+            for candidate in (
+                os.path.join(base_dir, dirname),
+                os.path.join(base_dir, "_internal", dirname),
+            ):
+                normalized_candidate = os.path.normcase(os.path.abspath(candidate))
+                if normalized_candidate in seen:
+                    continue
+                seen.add(normalized_candidate)
+                if os.path.isdir(candidate):
+                    return candidate
+    except Exception:
+        return ""
+    return ""
+
+
+def detect_subject_for_audio(audio_path: str) -> str:
+    try:
+        path_text = os.path.normcase(os.path.abspath(audio_path or "")).casefold()
+        subject_rules = (
+            ("부동산학개론", ("부동산학개론", "학개론", "개론", "이종호")),
+            ("민법", ("민사특별법", "김덕수", "민법")),
+            ("공인중개사법", ("공인중개사법", "중개사법", "중개실무", "정지웅")),
+            ("부동산공시법", ("부동산공시법", "공시법", "등기법", "지적법", "박윤모")),
+            ("부동산공법", ("부동산공법", "김희상", "공법")),
+            ("부동산세법", ("부동산세법", "정석진", "세법")),
+        )
+
+        for subject, keywords in subject_rules:
+            if any(keyword.casefold() in path_text for keyword in keywords):
+                return subject
+    except Exception:
+        return ""
+    return ""
+
+
 def _normalize_audio_path(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 
