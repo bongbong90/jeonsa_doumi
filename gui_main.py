@@ -22,6 +22,11 @@ import os
 
 
 
+from pathlib import Path
+
+
+
+
 
 import re
 
@@ -24508,6 +24513,62 @@ class TranscribeGUI(QWidget):
 
 
 
+    def _get_google_drive_auth_paths(self) -> tuple[str, str]:
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            base_dir = os.path.join(appdata, "전사도우미")
+        else:
+            base_dir = os.path.join(os.path.expanduser("~"), ".전사도우미")
+        return (
+            os.path.join(base_dir, "google_credentials.json"),
+            os.path.join(base_dir, "google_drive_token.json"),
+        )
+
+    def _is_valid_google_credentials_file(self, path: str) -> bool:
+        try:
+            file_path = Path(path)
+            if not file_path.exists() or file_path.stat().st_size < 20:
+                return False
+            with file_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            return bool(data.get("installed") or data.get("web"))
+        except Exception:
+            return False
+
+    def _is_valid_google_token_file(self, path: str) -> bool:
+        try:
+            file_path = Path(path)
+            if not file_path.exists() or file_path.stat().st_size < 20:
+                return False
+            with file_path.open("r", encoding="utf-8") as f:
+                data = json.load(f)
+            required_keys = ("token", "refresh_token", "client_id", "client_secret", "scopes")
+            return all(key in data for key in required_keys)
+        except Exception:
+            return False
+
+    def _has_google_drive_auth_files(self) -> bool:
+        cred_path, token_path = self._get_google_drive_auth_paths()
+        return (
+            self._is_valid_google_credentials_file(cred_path)
+            and self._is_valid_google_token_file(token_path)
+        )
+
+    def _show_google_drive_auth_warning(self):
+        cred_path, token_path = self._get_google_drive_auth_paths()
+        self.show_warning_message(
+            "인증 필요",
+            "Google Drive 인증 파일이 없거나 손상되었습니다.\n\n"
+            "다음 파일을 확인해 주세요:\n"
+            f"- {cred_path}\n"
+            f"- {token_path}\n\n"
+            "Google Drive 자동 업로드 체크를 해제하거나, 인증을 다시 설정한 뒤 진행해 주세요."
+        )
+
+
+
+
+
     def run_transcribe_process(self):
         has_selected_runtime_items = self.run_mode in ("selected", "all", "moved") and bool(self.selected_run_items)
         engine = self._current_transcription_engine()
@@ -24584,23 +24645,8 @@ class TranscribeGUI(QWidget):
             return
 
         if self.upload_drive_checkbox.isChecked():
-            appdata = os.environ.get("APPDATA")
-            if appdata:
-                cred_path = os.path.join(appdata, "전사도우미", "google_credentials.json")
-                token_path = os.path.join(appdata, "전사도우미", "google_drive_token.json")
-            else:
-                cred_path = os.path.join(os.path.expanduser("~"), ".전사도우미", "google_credentials.json")
-                token_path = os.path.join(os.path.expanduser("~"), ".전사도우미", "google_drive_token.json")
-
-            if not os.path.exists(cred_path) or not os.path.exists(token_path):
-                self.show_warning_message(
-                    "인증 필요",
-                    "Google Drive 업로드를 사용하려면 인증 파일이 필요합니다.\n\n"
-                    "필요한 파일:\n"
-                    f"{cred_path}\n"
-                    f"{token_path}\n\n"
-                    "인증 설정 후 다시 시도하거나, Google Drive 자동 업로드 체크를 해제해 주세요."
-                )
+            if not self._has_google_drive_auth_files():
+                self._show_google_drive_auth_warning()
                 self.set_transcribe_buttons_enabled(True)
                 self._sync_selected_runtime_outputs()
                 self.selected_run_items = []
