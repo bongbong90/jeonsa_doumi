@@ -50,6 +50,15 @@ PROMPT_FILENAME_BY_SUBJECT = {
     "부동산공시법": "부동산공시법_박윤모.txt",
     "부동산세법": "부동산세법_정석진.txt",
 }
+COMMON_CORRECTIONS_FILENAME = "common_terms.json"
+CORRECTIONS_FILENAME_BY_SUBJECT = {
+    "부동산학개론": "부동산학개론.json",
+    "민법": "민법.json",
+    "공인중개사법": "공인중개사법.json",
+    "부동산공법": "부동산공법.json",
+    "부동산공시법": "부동산공시법.json",
+    "부동산세법": "부동산세법.json",
+}
 
 
 # --------------------------------------------------
@@ -194,6 +203,103 @@ def load_initial_prompt(subject: str) -> tuple[str, str]:
 
     log("[QUALITY] prompt missing, continue without initial_prompt")
     return "", ""
+
+
+def load_corrections(subject: str) -> dict[str, str]:
+    corrections: dict[str, str] = {}
+
+    try:
+        corrections_dir = find_resource_dir("corrections")
+        if not corrections_dir:
+            log("[QUALITY] corrections missing, continue without corrections")
+            return corrections
+
+        subject_name = (subject or "").strip()
+        filenames = [COMMON_CORRECTIONS_FILENAME]
+        subject_filename = CORRECTIONS_FILENAME_BY_SUBJECT.get(subject_name, "")
+        if subject_filename:
+            filenames.append(subject_filename)
+
+        for filename in filenames:
+            correction_path = os.path.join(corrections_dir, filename)
+            if not os.path.isfile(correction_path):
+                continue
+
+            try:
+                with open(correction_path, "r", encoding="utf-8-sig") as f:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    log(f"[QUALITY] corrections load failed: {filename} (not a JSON object)")
+                    continue
+
+                loaded_count = 0
+                for raw_key, raw_value in data.items():
+                    if not isinstance(raw_key, str) or not isinstance(raw_value, str):
+                        continue
+                    key = raw_key.strip()
+                    if not key or key == raw_value:
+                        continue
+                    corrections[key] = raw_value
+                    loaded_count += 1
+
+                log(f"[QUALITY] corrections loaded: {filename} count={loaded_count}")
+            except Exception as e:
+                log(f"[QUALITY] corrections load failed: {filename} ({type(e).__name__}: {e})")
+                continue
+    except Exception as e:
+        log(f"[QUALITY] corrections load failed: {type(e).__name__}: {e}")
+
+    if corrections:
+        log(f"[QUALITY] corrections total={len(corrections)}")
+    else:
+        log("[QUALITY] corrections missing, continue without corrections")
+    return corrections
+
+
+def apply_text_corrections(text: str, corrections: dict[str, str]) -> tuple[str, int]:
+    if not isinstance(text, str) or not text:
+        return text, 0
+    if not corrections:
+        return text, 0
+
+    corrected_text = text
+    replacement_count = 0
+    try:
+        correction_items = sorted(corrections.items(), key=lambda item: len(item[0]), reverse=True)
+        for key, value in correction_items:
+            if not isinstance(key, str) or not isinstance(value, str) or not key:
+                continue
+            count = corrected_text.count(key)
+            if count <= 0:
+                continue
+            corrected_text = corrected_text.replace(key, value)
+            replacement_count += count
+    except Exception:
+        return corrected_text, replacement_count
+    return corrected_text, replacement_count
+
+
+def apply_corrections_to_result(result: dict, corrections: dict[str, str]) -> tuple[dict, int]:
+    if not isinstance(result, dict):
+        return result, 0
+
+    total_replacements = 0
+
+    if "text" in result:
+        corrected_text, replacement_count = apply_text_corrections(result.get("text"), corrections)
+        result["text"] = corrected_text
+        total_replacements += replacement_count
+
+    segments = result.get("segments")
+    if isinstance(segments, list):
+        for segment in segments:
+            if not isinstance(segment, dict) or "text" not in segment:
+                continue
+            corrected_text, replacement_count = apply_text_corrections(segment.get("text"), corrections)
+            segment["text"] = corrected_text
+            total_replacements += replacement_count
+
+    return result, total_replacements
 
 
 def _normalize_audio_path(path: str) -> str:
@@ -619,6 +725,9 @@ def transcribe_one_file(audio_path: str, index: int, total_files: int):
         transcribe_kwargs["initial_prompt"] = prompt_text
 
     result = model.transcribe(audio_path, **transcribe_kwargs)
+    corrections = load_corrections(subject)
+    result, replacement_count = apply_corrections_to_result(result, corrections)
+    log(f"[QUALITY] corrections applied replacements={replacement_count}")
 
     if stop_requested():
         log(f"[INFO] stop.flag 감지 - '{file_name}' 결과 저장 전 사용자 중지 요청 확인")
