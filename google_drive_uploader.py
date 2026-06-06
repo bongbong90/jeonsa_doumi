@@ -6,6 +6,8 @@ import mimetypes
 import argparse
 from pathlib import Path
 
+SCOPES = ['https://www.googleapis.com/auth/drive']  # 기존 사용자의 Drive 폴더 검색/업로드 접근 필요
+
 # 커스텀 예외 클래스
 class DriveUploadError(Exception):
     pass
@@ -39,8 +41,6 @@ def build_drive_service(credentials_path: str | Path | None = None, token_path: 
     except ImportError as e:
         raise DriveUploadError("Google API 패키지가 설치되어 있지 않습니다. (pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib)") from e
 
-    SCOPES = ['https://www.googleapis.com/auth/drive.file']
-    
     cred_path = Path(credentials_path) if credentials_path else get_default_credentials_path()
     tok_path = Path(token_path) if token_path else get_default_token_path()
 
