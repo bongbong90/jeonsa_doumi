@@ -46,3 +46,12 @@ gui_main_recovered.py
 
 .DS_Store
 Thumbs.db
+
+# Google Drive API Auth
+credentials.json
+token.json
+google_drive_token.json
+google_credentials.json
+*.client_secret.json
+.gdrive_auth/
+.drive_auth/
