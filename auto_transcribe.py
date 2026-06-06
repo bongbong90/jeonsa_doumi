@@ -21,6 +21,32 @@ try:
 except Exception:
     pass
 
+class _NullTextStream:
+    encoding = "utf-8"
+    errors = "replace"
+
+    def write(self, text):
+        return len(text) if text is not None else 0
+
+    def flush(self):
+        pass
+
+    def isatty(self):
+        return False
+
+
+def _ensure_standard_streams():
+    try:
+        if getattr(sys, "stdout", None) is None:
+            sys.stdout = _NullTextStream()
+        if getattr(sys, "stderr", None) is None:
+            sys.stderr = _NullTextStream()
+    except Exception:
+        pass
+
+
+_ensure_standard_streams()
+
 MODEL_SIZE = "medium"
 SUPPORTED_EXTENSIONS = (".mp3", ".MP3")
 SESSION_STATE_FILENAME = "transcribe_session_state.json"
