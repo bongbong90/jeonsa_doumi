@@ -30,7 +30,7 @@ a = Analysis(
     ["gui_main.py"],
     pathex=[],
     binaries=[],
-    datas=[("assets", "assets"), ("transcribe_helper.ico", "."), ("auto_transcribe.py", ".")],
+    datas=[("assets", "assets"), ("transcribe_helper.ico", "."), ("auto_transcribe.py", "."), ("prompts", "prompts"), ("corrections", "corrections")],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
