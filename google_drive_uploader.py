@@ -7,6 +7,13 @@ import argparse
 from pathlib import Path
 
 SCOPES = ['https://www.googleapis.com/auth/drive']  # 기존 사용자의 Drive 폴더 검색/업로드 접근 필요
+UNKNOWN_COURSE = "분류대기"
+UNKNOWN_SUBJECT = "과목불명"
+UNKNOWN_WEEK = "주차불명"
+DRIVE_UPLOAD_BLOCKED_MESSAGE = (
+    "[DRIVE_UPLOAD_BLOCKED] 표준 파일명 감지 실패: 과정/과목/주차를 확인할 수 없어 업로드를 중단합니다.\n"
+    "파일명을 '과정명_과목명_N주차_N강' 형식으로 정리한 뒤 다시 시도하세요."
+)
 
 # 커스텀 예외 클래스
 class DriveUploadError(Exception):
@@ -134,7 +141,7 @@ def detect_course_name(path_or_name: str) -> str:
         return "기본이론"
     if "기초이론" in name:
         return "기초이론"
-    return "분류대기"
+    return UNKNOWN_COURSE
 
 # 7. 과목 폴더 감지 함수
 def detect_subject_folder(path_or_name: str) -> str:
@@ -152,7 +159,7 @@ def detect_subject_folder(path_or_name: str) -> str:
         return "[2차] 부동산공법"
     if any(k in name for k in ["부동산세법", "세법", "정석진"]):
         return "[2차] 부동산세법"
-    return "과목불명"
+    return UNKNOWN_SUBJECT
 
 # 8. 주차 폴더 감지 함수
 def detect_week_folder(path_or_name: str) -> str:
@@ -171,21 +178,55 @@ def detect_week_folder(path_or_name: str) -> str:
         if re.search(r"_\d+주차$", parent_name):
             return parent_name
 
-    return "주차불명"
+    return UNKNOWN_WEEK
 
-# 9. Drive 경로 생성 함수
-def build_drive_folder_path(audio_path: str | Path) -> list[str]:
+def classify_upload_path(audio_path: str | Path) -> dict:
     path_str = str(audio_path)
+    stem = Path(audio_path).stem
     course = detect_course_name(path_str)
     subject = detect_subject_folder(path_str)
     week = detect_week_folder(path_str)
-    return [
-        "2026 제37회 공인중개사 자격시험",
-        "전사자료",
-        course,
-        subject,
-        week
-    ]
+    return {
+        "course": course,
+        "subject": subject,
+        "week": week,
+        "drive_path": [
+            "2026 제37회 공인중개사 자격시험",
+            "전사자료",
+            course,
+            subject,
+            week
+        ],
+        "has_week_marker": bool(re.search(r"\d+주차", stem)),
+        "has_lecture_marker": bool(re.search(r"\d+강", stem)),
+    }
+
+def validate_upload_classification(audio_path: str | Path) -> dict:
+    classification = classify_upload_path(audio_path)
+    reasons = []
+    if classification["course"] == UNKNOWN_COURSE:
+        reasons.append("과정명 감지 실패")
+    if classification["subject"] == UNKNOWN_SUBJECT:
+        reasons.append("과목명 감지 실패")
+    if classification["week"] == UNKNOWN_WEEK:
+        reasons.append("주차 감지 실패")
+    if not classification["has_week_marker"]:
+        reasons.append("파일명에 N주차 패턴 없음")
+    if not classification["has_lecture_marker"]:
+        reasons.append("파일명에 N강 패턴 없음")
+
+    classification["ok"] = not reasons
+    classification["reasons"] = reasons
+    return classification
+
+def format_upload_blocked_message(reasons: list[str]) -> str:
+    if not reasons:
+        return DRIVE_UPLOAD_BLOCKED_MESSAGE
+    return f"{DRIVE_UPLOAD_BLOCKED_MESSAGE}\n사유: {', '.join(reasons)}"
+
+# 9. Drive 경로 생성 함수
+def build_drive_folder_path(audio_path: str | Path) -> list[str]:
+    return classify_upload_path(audio_path)["drive_path"]
 
 # 10. 파일 업로드 함수
 def upload_file(service, local_path: str | Path, parent_id: str, duplicate_policy: str = "update_or_create") -> dict:
@@ -255,14 +296,33 @@ def upload_file(service, local_path: str | Path, parent_id: str, duplicate_polic
 # 11. 번들 업로드 함수
 def upload_transcription_bundle(audio_path: str | Path, include_mp3: bool = True, service=None) -> dict:
     audio_path = Path(audio_path)
+    classification = validate_upload_classification(audio_path)
     result = {
         "ok": False,
+        "blocked": False,
         "drive_folder_id": None,
-        "drive_path": build_drive_folder_path(audio_path),
+        "drive_path": classification["drive_path"],
+        "classification": {
+            "course": classification["course"],
+            "subject": classification["subject"],
+            "week": classification["week"],
+        },
+        "classification_errors": classification["reasons"],
         "files": [],
         "missing": [],
         "errors": []
     }
+
+    if not classification["ok"]:
+        result["blocked"] = True
+        result["errors"].append(format_upload_blocked_message(classification["reasons"]))
+        return result
+
+    if not audio_path.exists():
+        result["blocked"] = True
+        result["missing"].append(audio_path.name)
+        result["errors"].append(f"[DRIVE_UPLOAD_BLOCKED] 업로드 대상 MP3 파일을 찾을 수 없습니다: {audio_path}")
+        return result
     
     if not service:
         result["errors"].append("Drive service not provided")
@@ -303,6 +363,11 @@ def upload_transcription_bundle(audio_path: str | Path, include_mp3: bool = True
 
 # 12. CLI 테스트 인터페이스
 if __name__ == "__main__":
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    if hasattr(sys.stderr, "reconfigure"):
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Google Drive Uploader CLI")
     parser.add_argument("audio_path", help="Path to the mp3 file")
     parser.add_argument("--dry-run", action="store_true", default=True, help="Only print the path mapping without uploading")
@@ -312,26 +377,40 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    audio_path = Path(args.audio_path)
+    audio_path = Path(args.audio_path).expanduser().resolve(strict=False)
     
     print("=== Google Drive Uploader CLI ===")
     print(f"Target File: {audio_path}")
+
+    if not audio_path.exists():
+        print(f"\n[Error] 파일을 찾을 수 없습니다: {audio_path}")
+        sys.exit(1)
     
-    course = detect_course_name(audio_path)
-    subject = detect_subject_folder(audio_path)
-    week = detect_week_folder(audio_path)
-    drive_path = build_drive_folder_path(audio_path)
+    classification = validate_upload_classification(audio_path)
+    course = classification["course"]
+    subject = classification["subject"]
+    week = classification["week"]
+    drive_path = classification["drive_path"]
     
     print("\n[Detection Results]")
     print(f"Course  : {course}")
     print(f"Subject : {subject}")
     print(f"Week    : {week}")
-    print(f"Drive   : {' / '.join(drive_path)}")
+    if classification["ok"]:
+        print(f"Drive   : {' / '.join(drive_path)}")
+    else:
+        print("Drive   : (blocked)")
     
     print("\n[Target Files]")
     targets = [audio_path] + [audio_path.with_suffix(ext) for ext in [".txt", ".json", ".srt"]]
     for t in targets:
         print(f" - {t.name} (Exists: {t.exists()})")
+
+    if not classification["ok"]:
+        mode_name = "Upload Mode" if args.upload else "Dry Run"
+        print(f"\n[{mode_name}] Upload blocked. No Drive folders or files will be created.")
+        print(format_upload_blocked_message(classification["reasons"]))
+        sys.exit(1)
         
     if args.upload:
         print("\n[Upload Mode] Attempting OAuth and upload...")
