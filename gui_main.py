@@ -17244,7 +17244,82 @@ class TranscribeGUI(QWidget):
 
         return txt_path, json_path, srt_path
 
-    def _encode_colab_multipart_file(self, file_path: str) -> tuple[bytes, str]:
+    def _load_colab_quality_prompt(self, subject: str, log_func=None) -> str:
+        def _log(text: str):
+            if callable(log_func):
+                try:
+                    log_func(text)
+                except Exception:
+                    pass
+
+        subject_name = str(subject or "").strip()
+        try:
+            import auto_transcribe
+        except Exception as exc:
+            _log(f"[QUALITY] Colab prompt load skipped: auto_transcribe import failed ({type(exc).__name__})\n")
+            return ""
+
+        try:
+            prompt_text, prompt_filename = auto_transcribe.load_initial_prompt(subject_name)
+        except Exception as exc:
+            _log(f"[QUALITY] Colab prompt load failed: {type(exc).__name__}\n")
+            return ""
+
+        if prompt_text:
+            _log(f"[QUALITY] Colab prompt loaded: {prompt_filename} chars={len(prompt_text)}\n")
+        else:
+            _log("[QUALITY] Colab prompt missing, continue without initial_prompt\n")
+        return prompt_text
+
+    def _load_colab_quality_corrections(self, subject: str, log_func=None) -> dict:
+        def _log(text: str):
+            if callable(log_func):
+                try:
+                    log_func(text)
+                except Exception:
+                    pass
+
+        subject_name = str(subject or "").strip()
+        try:
+            import auto_transcribe
+        except Exception as exc:
+            _log(f"[QUALITY] Colab corrections load skipped: auto_transcribe import failed ({type(exc).__name__})\n")
+            return {}
+
+        try:
+            corrections = auto_transcribe.load_corrections(subject_name)
+        except Exception as exc:
+            _log(f"[QUALITY] Colab corrections load failed: {type(exc).__name__}\n")
+            return {}
+
+        if corrections:
+            _log(f"[QUALITY] Colab corrections loaded: count={len(corrections)}\n")
+        else:
+            _log("[QUALITY] Colab corrections missing, continue without corrections\n")
+        return corrections
+
+    def _apply_colab_quality_corrections(self, result: dict, corrections: dict, log_func=None) -> dict:
+        def _log(text: str):
+            if callable(log_func):
+                try:
+                    log_func(text)
+                except Exception:
+                    pass
+
+        if not corrections or not isinstance(result, dict):
+            return result
+
+        try:
+            import auto_transcribe
+            result, replacement_count = auto_transcribe.apply_corrections_to_result(result, corrections)
+            _log(f"[QUALITY] Colab corrections applied: replacements={replacement_count}\n")
+        except Exception as exc:
+            _log(f"[QUALITY] Colab corrections apply failed: {type(exc).__name__}\n")
+        return result
+
+    def _encode_colab_multipart_file(
+        self, file_path: str, initial_prompt: str = "", subject: str = ""
+    ) -> tuple[bytes, str]:
         boundary = f"----TranscribeHelperBoundary{uuid.uuid4().hex}"
         boundary_bytes = boundary.encode("ascii")
         crlf = b"\r\n"
@@ -17254,10 +17329,19 @@ class TranscribeGUI(QWidget):
         with open(file_path, "rb") as f:
             file_bytes = f.read()
 
+        def _field(name: str, value: str) -> bytes:
+            chunk = bytearray()
+            chunk.extend(b"--" + boundary_bytes + crlf)
+            chunk.extend(
+                f'Content-Disposition: form-data; name="{name}"'.encode("utf-8") + crlf + crlf
+            )
+            chunk.extend(str(value or "").encode("utf-8") + crlf)
+            return bytes(chunk)
+
         body = bytearray()
-        body.extend(b"--" + boundary_bytes + crlf)
-        body.extend(b'Content-Disposition: form-data; name="language"' + crlf + crlf)
-        body.extend(b"ko" + crlf)
+        body.extend(_field("language", "ko"))
+        body.extend(_field("initial_prompt", initial_prompt))
+        body.extend(_field("subject", subject))
         body.extend(b"--" + boundary_bytes + crlf)
         body.extend(
             (
@@ -17345,8 +17429,12 @@ class TranscribeGUI(QWidget):
 
         return chunk_infos, chunk_dir
 
-    def _post_colab_transcribe(self, transcribe_url: str, file_path: str) -> dict:
-        body, content_type = self._encode_colab_multipart_file(file_path)
+    def _post_colab_transcribe(
+        self, transcribe_url: str, file_path: str, initial_prompt: str = "", subject: str = ""
+    ) -> dict:
+        body, content_type = self._encode_colab_multipart_file(
+            file_path, initial_prompt=initial_prompt, subject=subject
+        )
         req = urllib_request.Request(
             transcribe_url,
             data=body,
@@ -17406,7 +17494,8 @@ class TranscribeGUI(QWidget):
         normalized_payload["language"] = str(payload.get("language", "") or "").strip() or "ko"
         return normalized_payload
 
-    def _start_colab_transcribe_run(self, runtime_folder: str) -> bool:
+    def _start_colab_transcribe_run(self, runtime_folder: str, subject: str = "") -> bool:
+        selected_subject = str(subject or "").strip()
         colab_url = str(self.input_colab_url.text() or "").strip()
         transcribe_url = self._build_colab_transcribe_url(colab_url)
         if not self.btn_colab_check.property("connected"):
@@ -17457,7 +17546,7 @@ class TranscribeGUI(QWidget):
 
         worker = threading.Thread(
             target=self._run_colab_transcribe_worker,
-            args=(request_id, transcribe_url, run_targets, progress_state),
+            args=(request_id, transcribe_url, run_targets, progress_state, selected_subject),
             daemon=True,
         )
         worker.start()
@@ -17469,6 +17558,7 @@ class TranscribeGUI(QWidget):
         transcribe_url: str,
         run_targets: list[dict],
         progress_state: dict | None = None,
+        subject: str = "",
     ):
         def _emit_comm_time():
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -17484,6 +17574,10 @@ class TranscribeGUI(QWidget):
 
         def _emit_log(text: str):
             self._colab_run_bridge.log_line.emit(str(text or ""))
+
+        quality_subject = str(subject or "").strip()
+        quality_prompt_text = self._load_colab_quality_prompt(quality_subject, log_func=_emit_log)
+        quality_corrections = self._load_colab_quality_corrections(quality_subject, log_func=_emit_log)
 
         try:
             total = len(run_targets)
@@ -17551,7 +17645,12 @@ class TranscribeGUI(QWidget):
                         chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
                         stage = f"조각 전송 {chunk_idx}/{chunk_total}"
 
-                        chunk_result = self._post_colab_transcribe(transcribe_url, chunk_path)
+                        chunk_result = self._post_colab_transcribe(
+                            transcribe_url,
+                            chunk_path,
+                            initial_prompt=quality_prompt_text,
+                            subject=quality_subject,
+                        )
                         _emit_comm_time()
 
                         if not merged_language:
@@ -17599,6 +17698,11 @@ class TranscribeGUI(QWidget):
                         "segments": merged_segments,
                         "language": merged_language or "ko",
                     }
+
+                    stage = "보정 적용"
+                    merged_result = self._apply_colab_quality_corrections(
+                        merged_result, quality_corrections, log_func=_emit_log
+                    )
 
                     stage = "결과 파일 저장"
                     txt_path, json_path, srt_path = self._save_colab_result_files(runtime_mp3, merged_result)
@@ -24534,7 +24638,7 @@ class TranscribeGUI(QWidget):
         self.update_session_label()
 
         if engine == "colab":
-            if not self._start_colab_transcribe_run(runtime_folder):
+            if not self._start_colab_transcribe_run(runtime_folder, selected_subject):
                 return
             return
 
