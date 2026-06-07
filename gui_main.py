@@ -8172,21 +8172,69 @@ class TranscribeGUI(QWidget):
         colab_policy.setRetainSizeWhenHidden(False)
         self.colab_url_panel.setSizePolicy(colab_policy)
         colab_box = QVBoxLayout(self.colab_url_panel)
-        colab_box.setContentsMargins(0, 0, 0, 0)
-        colab_box.setSpacing(0)
+        colab_box.setContentsMargins(0, 8, 0, 0)
+        colab_box.setSpacing(8)
 
-        colab_row = QHBoxLayout()
-        colab_row.setContentsMargins(0, 0, 0, 0)
-        colab_row.setSpacing(6)
+        colab_guide_box = QGroupBox("Colab 연결")
+        colab_guide_box.setStyleSheet("""
+            QGroupBox {
+                border: 1px solid #e2e8f0;
+                border-radius: 6px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: #f8fafc;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                padding: 0 5px;
+                left: 10px;
+                color: #475569;
+                font-weight: bold;
+            }
+        """)
+        colab_guide_layout = QVBoxLayout(colab_guide_box)
+        colab_guide_layout.setContentsMargins(12, 12, 12, 12)
+        colab_guide_layout.setSpacing(6)
+
+        guide_label = QLabel(
+            "1. Colab 열기 버튼으로 노트북을 엽니다.\n"
+            "2. 노트북에서 서버 실행 셀을 실행합니다.\n"
+            "3. 출력된 https://...trycloudflare.com 주소를 복사한 뒤 아래에 붙여넣습니다."
+        )
+        guide_label.setStyleSheet("color: #334155; line-height: 1.4;")
+        guide_label.setWordWrap(True)
+        colab_guide_layout.addWidget(guide_label)
+        
+        colab_box.addWidget(colab_guide_box)
+
+        colab_input_row = QHBoxLayout()
+        colab_input_row.setContentsMargins(0, 0, 0, 0)
+        colab_input_row.setSpacing(6)
+        
         self.label_colab_url = QLabel("Colab URL", objectName="TranscriptionModeLabel")
         self.label_colab_url.setMinimumWidth(64)
         self.label_colab_url.setMaximumWidth(64)
-        colab_row.addWidget(self.label_colab_url, 0)
+        colab_input_row.addWidget(self.label_colab_url, 0)
+        
         self.input_colab_url = QLineEdit()
         self.input_colab_url.setObjectName("ColabUrlInput")
         self.input_colab_url.setMinimumHeight(32)
-        self.input_colab_url.setPlaceholderText("https://colab.research.google.com/...")
-        colab_row.addWidget(self.input_colab_url, 1)
+        self.input_colab_url.setPlaceholderText("https://...trycloudflare.com")
+        colab_input_row.addWidget(self.input_colab_url, 1)
+
+        self.btn_colab_paste = QPushButton("클립보드에서 가져오기")
+        self.btn_colab_paste.setObjectName("ColabPasteButton")
+        self.btn_colab_paste.setProperty("uiRole", "controlOutline")
+        self.btn_colab_paste.setFixedHeight(32)
+        self.btn_colab_paste.clicked.connect(self._handle_paste_colab_url_from_clipboard)
+        colab_input_row.addWidget(self.btn_colab_paste, 0)
+
+        colab_box.addLayout(colab_input_row)
+        
+        colab_action_row = QHBoxLayout()
+        colab_action_row.setContentsMargins(70, 0, 0, 0)
+        colab_action_row.setSpacing(6)
 
         self.btn_colab_check = QPushButton("연결 확인")
         self.btn_colab_check.setObjectName("ColabCheckButton")
@@ -8194,19 +8242,22 @@ class TranscribeGUI(QWidget):
         self.btn_colab_check.setProperty("connected", False)
         self.btn_colab_check.setFixedHeight(32)
         self.btn_colab_check.setFixedWidth(92)
-        colab_row.addWidget(self.btn_colab_check, 0)
+        colab_action_row.addWidget(self.btn_colab_check, 0)
+        
         self.btn_colab_open = QPushButton("Colab 열기")
         self.btn_colab_open.setObjectName("ColabOpenButton")
         self.btn_colab_open.setProperty("uiRole", "controlOutline")
         self.btn_colab_open.setFixedHeight(32)
         self.btn_colab_open.setFixedWidth(92)
         self.btn_colab_open.clicked.connect(self.open_colab_notebook)
-        colab_row.addWidget(self.btn_colab_open, 0)
-
-        colab_box.addLayout(colab_row)
-        self.label_colab_last_comm = QLabel("마지막 통신: --:--:--", objectName="TranscriptionModeLabel")
-        self.label_colab_last_comm.setStyleSheet("color: #64748b; font-size: 11px; margin-top: 2px; margin-left: 70px;")
-        colab_box.addWidget(self.label_colab_last_comm)
+        colab_action_row.addWidget(self.btn_colab_open, 0)
+        
+        self.label_colab_last_comm = QLabel("상태: 연결 대기", objectName="TranscriptionModeLabel")
+        self.label_colab_last_comm.setStyleSheet("color: #64748b; font-size: 11px;")
+        colab_action_row.addWidget(self.label_colab_last_comm, 1, Qt.AlignVCenter)
+        
+        colab_box.addLayout(colab_action_row)
+        
         engine_box.addWidget(self.colab_url_panel)
         cbox.addWidget(self.transcription_engine_panel)
 
@@ -16849,14 +16900,17 @@ class TranscribeGUI(QWidget):
             self._set_colab_check_button_connected_style(False)
             self.btn_colab_check.setText("확인 중...")
             self.btn_colab_check.setEnabled(False)
+            self.label_colab_last_comm.setText("상태: 연결 확인 중...")
             return
         if self._colab_check_connected:
             self._set_colab_check_button_connected_style(True)
             self.btn_colab_check.setText("연결됨 ✓")
             self.btn_colab_check.setEnabled(is_colab)
+            self.label_colab_last_comm.setText("상태: 연결됨 ✓")
             return
         self._set_colab_check_button_connected_style(False)
         self.btn_colab_check.setText("연결 확인")
+        self.btn_colab_check.setEnabled(is_colab)
         self.btn_colab_check.setEnabled(is_colab)
 
     def _build_colab_health_url(self, raw_url: str) -> str:
@@ -17498,15 +17552,12 @@ class TranscribeGUI(QWidget):
         selected_subject = str(subject or "").strip()
         colab_url = str(self.input_colab_url.text() or "").strip()
         transcribe_url = self._build_colab_transcribe_url(colab_url)
-        if not self.btn_colab_check.property("connected"):
-            self.show_info_message("알림", "Colab 연결을 먼저 확인해 주세요.")
-            self.set_transcribe_buttons_enabled(True)
-            self._sync_selected_runtime_outputs()
-            self.selected_run_items = []
-            return False
-
-        if not transcribe_url:
-            self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
+        if not self.btn_colab_check.property("connected") or not transcribe_url:
+            self.show_warning_message(
+                "Colab URL을 입력해 주세요",
+                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\n"
+                "Colab에서 출력된 https://...trycloudflare.com 주소를 입력한 뒤 연결을 확인해 주세요."
+            )
             self.set_transcribe_buttons_enabled(True)
             self._sync_selected_runtime_outputs()
             self.selected_run_items = []
@@ -17838,16 +17889,44 @@ class TranscribeGUI(QWidget):
         if self._colab_check_connected:
             self._colab_check_connected = False
             self._update_colab_check_button_state()
+        if not self.colab_url:
+            self.label_colab_last_comm.setText("상태: 연결 대기")
         self.save_ui_preferences()
+
+    def _handle_paste_colab_url_from_clipboard(self):
+        try:
+            clipboard = QApplication.clipboard()
+            text = clipboard.text() or ""
+            match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", text)
+            if match:
+                url = match.group(0)
+                self.input_colab_url.setText(url)
+                self._handle_colab_connection_check()
+            else:
+                self.show_warning_message(
+                    "Colab URL을 찾을 수 없어요",
+                    "클립보드에서 trycloudflare 주소를 찾지 못했습니다.\n"
+                    "Colab 출력창의 https://...trycloudflare.com 주소를 복사한 뒤 다시 시도해 주세요."
+                )
+        except Exception as e:
+            self.append_log_text(f"[GUI] 클립보드 URL 가져오기 실패: {e}\n")
 
     def _handle_colab_connection_check(self):
         colab_url = str(self.input_colab_url.text() or "").strip()
         if not colab_url:
-            self.show_info_message("알림", "Colab URL을 입력해 주세요.")
+            self.show_warning_message(
+                "Colab URL을 입력해 주세요",
+                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\n"
+                "Colab에서 출력된 https://...trycloudflare.com 주소를 입력한 뒤 연결을 확인해 주세요."
+            )
             return
         health_url = self._build_colab_health_url(colab_url)
         if not health_url:
-            self.show_info_message("알림", "Colab 서버에 연결할 수 없습니다. URL을 확인해 주세요.")
+            self.show_warning_message(
+                "Colab에 연결하지 못했어요",
+                "입력한 URL로 Colab 서버에 연결할 수 없습니다.\n"
+                "노트북 서버 셀이 실행 중인지, trycloudflare 주소가 정확한지 확인해 주세요."
+            )
             return
         if self._colab_check_in_progress:
             return
@@ -17871,16 +17950,19 @@ class TranscribeGUI(QWidget):
         self._colab_check_in_progress = False
         if result_code == "success":
             self._colab_check_connected = True
+            self.label_colab_last_comm.setText("상태: 연결됨 ✓")
             self._update_colab_check_button_state()
             self.show_info_message("알림", "Colab 연결 성공")
             return
 
         self._colab_check_connected = False
+        self.label_colab_last_comm.setText("상태: 연결 실패 — URL 또는 Colab 실행 상태를 확인해 주세요.")
         self._update_colab_check_button_state()
-        if result_code == "invalid_response":
-            self.show_info_message("알림", "Colab 서버 응답이 올바르지 않습니다.")
-            return
-        self.show_info_message("알림", "Colab 서버에 연결할 수 없습니다. URL을 확인해 주세요.")
+        self.show_warning_message(
+            "Colab에 연결하지 못했어요",
+            "입력한 URL로 Colab 서버에 연결할 수 없습니다.\n"
+            "노트북 서버 셀이 실행 중인지, trycloudflare 주소가 정확한지 확인해 주세요."
+        )
 
     def load_ui_preferences(self):
         try:
@@ -24581,7 +24663,11 @@ class TranscribeGUI(QWidget):
         if engine == "colab":
             colab_url = str(self.input_colab_url.text() or "").strip()
             if not colab_url or not self._colab_check_connected:
-                self.show_info_message("알림", "Colab URL을 먼저 입력하고 연결을 확인해 주세요.")
+                self.show_warning_message(
+                    "Colab URL을 입력해 주세요",
+                    "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\n"
+                    "Colab에서 출력된 https://...trycloudflare.com 주소를 입력한 뒤 연결을 확인해 주세요."
+                )
                 return
         else:
             auto_path = self.get_auto_transcribe_path()
