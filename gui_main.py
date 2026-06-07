@@ -18258,7 +18258,10 @@ class TranscribeGUI(QWidget):
         self._refresh_file_list_empty_state()
 
         if show_empty_message and not mp3_paths:
-            self.show_info_message("\uC54C\uB9BC", "\uC120\uD0DD\uD55C \uD3F4\uB354\uC5D0 MP3 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.")
+            self.show_warning_message(
+                "MP3 파일을 찾을 수 없어요",
+                "선택한 폴더에 전사할 MP3 파일이 없습니다.\n다른 폴더를 선택하거나 MP3 파일을 추가한 뒤 다시 시도해 주세요."
+            )
 
         return True
 
@@ -20086,163 +20089,35 @@ class TranscribeGUI(QWidget):
 
 
 
-        content_layout = QHBoxLayout(content)
-
-
-
-
-
+        content_layout = QVBoxLayout(content)
         content_layout.setContentsMargins(14, 12, 14, 12)
+        content_layout.setSpacing(8)
 
-
-
-
-
-        content_layout.setSpacing(12)
-
-
-
-
-
-
-
-
-
-
+        header_row = QHBoxLayout()
+        header_row.setContentsMargins(0, 0, 0, 0)
+        header_row.setSpacing(10)
 
         icon_label = QLabel("")
-
-
-
-
-
         icon_label.setObjectName("MessageIcon")
-
-
-
-
-
         icon_label.setFixedSize(28, 28)
-
-
-
-
-
         picked_icon = self._pick_message_icon(icon)
-
-
-
-
-
         if not picked_icon.isNull():
-
-
-
-
-
             icon_label.setPixmap(picked_icon.pixmap(24, 24))
-
-
-
-
-
-        content_layout.addWidget(icon_label, 0, Qt.AlignTop)
-
-
-
-
-
-
-
-
-
-
-
-        text_col = QVBoxLayout()
-
-
-
-
-
-        text_col.setContentsMargins(0, 0, 0, 0)
-
-
-
-
-
-        text_col.setSpacing(5)
-
-
-
-
-
-
-
-
-
-
+        header_row.addWidget(icon_label, 0, Qt.AlignVCenter)
 
         heading = QLabel((title or "").strip() or APP_DISPLAY_NAME)
-
-
-
-
-
         heading.setObjectName("MessageHeading")
+        heading.setWordWrap(True)
+        heading.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        header_row.addWidget(heading, 1, Qt.AlignVCenter)
 
+        content_layout.addLayout(header_row)
 
-
-
-
-        heading.setWordWrap(False)
-
-
-
-
-
-        text_col.addWidget(heading)
-
-
-
-
-
-
-
-
-
-
-
-        body = QLabel((message or "").strip() or "\uD45C\uC2DC\uD560 \uBA54\uC2DC\uC9C0\uAC00 \uC5C6\uC2B5\uB2C8\uB2E4.")
-
-
-
-
-
+        body = QLabel((message or "").strip() or "표시할 메시지가 없습니다.")
         body.setObjectName("MessageText")
-
-
-
-
-
         body.setWordWrap(True)
-
-
-
-
-
-        body.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-
-
-
-
-
-        text_col.addWidget(body)
-
-
-
-
-
-        content_layout.addLayout(text_col, 1)
+        body.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        content_layout.addWidget(body)
 
 
 
@@ -20753,6 +20628,15 @@ class TranscribeGUI(QWidget):
 
 
         dialog.exec()
+
+    def show_question_message(self, title: str, message: str, yes_text: str = "예", no_text: str = "아니오") -> bool:
+        dialog, button_box = self._build_message_box(title, message, QMessageBox.Question)
+        yes_btn = button_box.addButton(yes_text, QDialogButtonBox.YesRole)
+        no_btn = button_box.addButton(no_text, QDialogButtonBox.NoRole)
+        yes_btn.setObjectName("DialogPrimaryButton")
+        yes_btn.clicked.connect(dialog.accept)
+        no_btn.clicked.connect(dialog.reject)
+        return dialog.exec() == QDialog.Accepted
 
 
 
@@ -22053,12 +21937,15 @@ class TranscribeGUI(QWidget):
         rename_needed = [p for row, src, p in plans if p.needs_rename and not p.error and not p.conflict]
 
         if errors or conflicts:
-            msg = "[경고] 파일명 자동 정규화를 진행할 수 없는 파일이 있습니다.\n전사를 중단하고 확인해주세요.\n\n"
             if errors:
+                title = "파일명을 정리할 수 없어요"
+                msg = "일부 파일의 과정명, 과목명 또는 주차 정보를 확인하지 못했습니다.\n파일명을 확인하거나 과정명/과목명을 선택한 뒤 다시 시도해 주세요.\n\n"
                 msg += f"오류 예: {errors[0].original_name} -> {errors[0].error}\n"
-            if conflicts:
+            else:
+                title = "같은 이름의 파일이 이미 있어요"
+                msg = "변경하려는 파일명과 같은 파일이 이미 존재합니다.\n기존 파일을 확인한 뒤 다시 시도해 주세요.\n\n"
                 msg += f"충돌 예: {conflicts[0].original_name} -> 대상 파일 이미 존재\n"
-            self.show_warning_message("파일명 정규화 오류", msg.strip())
+            self.show_warning_message(title, msg.strip())
             return False
 
         if not rename_needed:
@@ -22083,14 +21970,7 @@ class TranscribeGUI(QWidget):
 
         msg += "이대로 파일명을 변경하고 전사를 시작하시겠습니까?"
         
-        reply = QMessageBox.question(
-            self,
-            "파일명 정규화 확인",
-            msg.strip(),
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
-        )
-        return reply == QMessageBox.StandardButton.Yes
+        return self.show_question_message("파일명 정규화 확인", msg.strip(), "변경 적용", "취소")
 
     def _apply_filename_normalization_plans(self, rows: list[dict], plans: list) -> bool:
         for row, src, p in plans:
@@ -24550,12 +24430,9 @@ class TranscribeGUI(QWidget):
     def _show_google_drive_auth_warning(self):
         cred_path, token_path = self._get_google_drive_auth_paths()
         self.show_warning_message(
-            "인증 필요",
-            "Google Drive 인증 파일이 없거나 손상되었습니다.\n\n"
-            "다음 파일을 확인해 주세요:\n"
-            f"- {cred_path}\n"
-            f"- {token_path}\n\n"
-            "Google Drive 자동 업로드 체크를 해제하거나, 인증을 다시 설정한 뒤 진행해 주세요."
+            "Google Drive 인증이 필요해요",
+            "자동 업로드를 사용하려면 Google Drive 인증 파일이 필요합니다.\n"
+            "인증 파일을 확인한 뒤 다시 시도해 주세요."
         )
 
 
@@ -24567,8 +24444,7 @@ class TranscribeGUI(QWidget):
         selected_subject = self.combo_transcribe_subject.currentText().strip()
         if not selected_course or not selected_subject:
             self.show_warning_message(
-                "선택 필요",
-                "과정명과 과목명을 먼저 선택해 주세요.\n\n"
+                "과정명과 과목명을 선택해 주세요",
                 "다운로드 원본 파일명에는 과목명이 포함되지 않는 경우가 많아,\n"
                 "정확한 파일명 정리와 과목별 전사 보정을 위해 선택이 필요합니다."
             )
@@ -24577,20 +24453,16 @@ class TranscribeGUI(QWidget):
         has_selected_runtime_items = self.run_mode in ("selected", "all", "moved") and bool(self.selected_run_items)
         if not has_selected_runtime_items and self.target_folder:
             _file_count = len(self.file_queue_rows) if self.file_queue_rows else 0
-            reply = QMessageBox.question(
-                self,
-                "전체 폴더 대상 과정/과목 적용",
+            msg = (
                 f"현재 선택한 과정/과목이 이번 전사 대상 전체에 적용됩니다.\n\n"
                 f"과정명: {selected_course}\n"
                 f"과목명: {selected_subject}\n"
                 f"대상 파일 수: {_file_count}개\n\n"
                 f"여러 과목 파일이 섞여 있다면 [취소]를 누르고,\n"
-                f"과목별로 파일을 체크해서 나누어 실행하세요.\n\n"
-                f"계속 진행할까요?",
-                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-                QMessageBox.StandardButton.No
+                f"과목별로 파일을 체크해서 나누어 실행해 주세요.\n\n"
+                f"계속 진행할까요?"
             )
-            if reply == QMessageBox.StandardButton.No:
+            if not self.show_question_message("전사 대상 전체에 같은 과정/과목이 적용됩니다", msg, "계속 진행", "취소"):
                 return
 
         engine = self._current_transcription_engine()
@@ -24693,7 +24565,7 @@ class TranscribeGUI(QWidget):
             self.set_transcribe_buttons_enabled(True)
             self._sync_selected_runtime_outputs()
             self.selected_run_items = []
-            self.show_error_message("\uC624\uB958", "\uC804\uC0AC \uD504\uB85C\uC138\uC2A4\uB97C \uC2DC\uC791\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.")
+            self.show_error_message("전사를 시작하지 못했어요", "전사 실행 중 문제가 발생했습니다.\n잠시 후 다시 시도하거나 실행 로그를 확인해 주세요.")
             return
 
         self._set_status_text(self._run_mode_in_progress_text())
