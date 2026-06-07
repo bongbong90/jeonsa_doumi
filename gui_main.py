@@ -474,6 +474,10 @@ SETTINGS_KEY_SHUTDOWN_AFTER_DONE = "ui/shutdown_after_done"
 
 SETTINGS_KEY_SHUTDOWN_WAIT_SECONDS = "ui/shutdown_wait_seconds"
 SETTINGS_KEY_UPLOAD_DRIVE = "ui/upload_drive"
+SETTINGS_KEY_TRANSCRIBE_COURSE = "ui/transcribe_course"
+SETTINGS_KEY_TRANSCRIBE_SUBJECT = "ui/transcribe_subject"
+SETTINGS_KEY_TRANSCRIBE_COURSE = "ui/transcribe_course"
+SETTINGS_KEY_TRANSCRIBE_SUBJECT = "ui/transcribe_subject"
 SETTINGS_KEY_TRANSCRIPTION_ENGINE = "ui/transcription_engine"
 SETTINGS_KEY_COLAB_URL = "ui/colab_url"
 
@@ -6241,6 +6245,16 @@ class TranscribeGUI(QWidget):
 
         self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
 
+        self.course_subject_layout = QHBoxLayout()
+        self.course_subject_layout.addWidget(QLabel("과정명:"))
+        self.combo_transcribe_course = QComboBox()
+        self.combo_transcribe_course.addItems(["", "개념완성", "기본이론", "기초이론"])
+        self.course_subject_layout.addWidget(self.combo_transcribe_course)
+        self.course_subject_layout.addWidget(QLabel("과목명:"))
+        self.combo_transcribe_subject = QComboBox()
+        self.combo_transcribe_subject.addItems(["", "부동산학개론", "민법", "공인중개사법", "부동산공법", "부동산공시법", "부동산세법"])
+        self.course_subject_layout.addWidget(self.combo_transcribe_subject)
+        self.course_subject_layout.addStretch(1)
         self.upload_drive_checkbox = QCheckBox("전사 완료 후 Google Drive에 자동 업로드")
 
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
@@ -6311,6 +6325,7 @@ class TranscribeGUI(QWidget):
 
         obox.addWidget(self.chk_notify_total)
 
+        obox.addLayout(self.course_subject_layout)
         obox.addWidget(self.upload_drive_checkbox)
 
         obox.addWidget(self.shutdown_checkbox)
@@ -8806,6 +8821,10 @@ class TranscribeGUI(QWidget):
         self.chk_notify_total.stateChanged.connect(self.save_ui_preferences)
 
         self.upload_drive_checkbox.stateChanged.connect(self.save_ui_preferences)
+        self.combo_transcribe_course.currentTextChanged.connect(self.save_ui_preferences)
+        self.combo_transcribe_subject.currentTextChanged.connect(self.save_ui_preferences)
+        self.combo_transcribe_course.currentTextChanged.connect(self.save_ui_preferences)
+        self.combo_transcribe_subject.currentTextChanged.connect(self.save_ui_preferences)
 
 
 
@@ -17816,6 +17835,10 @@ class TranscribeGUI(QWidget):
             self.upload_drive_checkbox.setChecked(
                 bool(self.ui_settings.value(SETTINGS_KEY_UPLOAD_DRIVE, False, type=bool))
             )
+            saved_course = str(self.ui_settings.value(SETTINGS_KEY_TRANSCRIBE_COURSE, "") or "").strip()
+            self.combo_transcribe_course.setCurrentText(saved_course)
+            saved_subject = str(self.ui_settings.value(SETTINGS_KEY_TRANSCRIBE_SUBJECT, "") or "").strip()
+            self.combo_transcribe_subject.setCurrentText(saved_subject)
             self.shutdown_checkbox.setChecked(
                 bool(self.ui_settings.value(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, False, type=bool))
             )
@@ -17871,6 +17894,8 @@ class TranscribeGUI(QWidget):
             self.ui_settings.setValue(SETTINGS_KEY_NOTIFY_TOTAL, self.chk_notify_total.isChecked())
 
             self.ui_settings.setValue(SETTINGS_KEY_UPLOAD_DRIVE, self.upload_drive_checkbox.isChecked())
+            self.ui_settings.setValue(SETTINGS_KEY_TRANSCRIBE_COURSE, self.combo_transcribe_course.currentText())
+            self.ui_settings.setValue(SETTINGS_KEY_TRANSCRIBE_SUBJECT, self.combo_transcribe_subject.currentText())
 
             self.ui_settings.setValue(SETTINGS_KEY_SHUTDOWN_AFTER_DONE, self.shutdown_checkbox.isChecked())
 
@@ -21982,9 +22007,13 @@ class TranscribeGUI(QWidget):
         self.run_transcribe_process()
 
     def _detect_filename_normalization_hints(self, row: dict, source_path: str) -> dict:
+        selected_course = getattr(self, "combo_transcribe_course", None)
+        selected_subject = getattr(self, "combo_transcribe_subject", None)
+        c_val = selected_course.currentText().strip() if selected_course else ""
+        s_val = selected_subject.currentText().strip() if selected_subject else ""
         hints = {
-            "course_hint": row.get("course"),
-            "subject_hint": row.get("subject"),
+            "course_hint": c_val or row.get("course"),
+            "subject_hint": s_val or row.get("subject"),
             "week_hint": row.get("week")
         }
         
@@ -24570,7 +24599,27 @@ class TranscribeGUI(QWidget):
 
 
     def run_transcribe_process(self):
+        selected_course = self.combo_transcribe_course.currentText().strip()
+        selected_subject = self.combo_transcribe_subject.currentText().strip()
+        if not selected_course or not selected_subject:
+            self.show_warning_message(
+                "선택 필요",
+                "과정명과 과목명을 먼저 선택해 주세요.\n\n다운로드 원본 파일명은 과목을 자동 판별하기 어렵습니다.\n전사할 파일의 과정명과 과목명을 선택한 뒤 다시 시작해 주세요."
+            )
+            return
+
         has_selected_runtime_items = self.run_mode in ("selected", "all", "moved") and bool(self.selected_run_items)
+        if not has_selected_runtime_items and self.target_folder:
+            reply = QMessageBox.question(
+                self,
+                "전체 폴더 대상 과정/과목 적용",
+                f"현재 폴더 전체 파일에 선택한 과정/과목이 적용됩니다.\n\n과정명: {selected_course}\n과목명: {selected_subject}\n\n여러 과목 파일이 섞여 있다면 취소 후 과목별로 체크해서 나누어 실행하세요.\n계속 진행할까요?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.No:
+                return
+
         engine = self._current_transcription_engine()
         if not self.target_folder and not has_selected_runtime_items:
             self.show_warning_message("\uACBD\uACE0", "\uBA3C\uC800 \uC804\uC0AC \uD3F4\uB354 \uB610\uB294 \uD30C\uC77C \uBAA9\uB85D\uC744 \uC900\uBE44\uD574 \uC8FC\uC138\uC694.")
