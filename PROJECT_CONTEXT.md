@@ -43,20 +43,23 @@
 - 상단 탭: `Transcriptions`, `Dashboard`, `Folders`
 - 전사 엔진 선택: `로컬 Whisper(local)` / `Colab Large-v3(colab)`
 - Transcriptions 파일 큐 상태: `WAITING`, `PROCESSING`, `DONE`, `FAILED`, `MOVED`, `STOP`
-- MP3 길이 추정: `mutagen` -> `tinytag` -> MP3 프레임 직접 파싱
+- 전사 파일 분류: 과정명, 과목명 선택 (파일명 정규화 기준, 여러 과목 혼합 방지)
+- Google Drive 자동 업로드: 전사 완료 후 MP3/TXT/JSON/SRT 4종 업로드 토글
 - 선택 파일 이동/이동 후 전사/전체 전사/즉시 중지 버튼 제공
 
 ## 5. 로컬 전사 흐름
-1. GUI가 `QProcess`로 `auto_transcribe.py <runtime_folder>` 실행
-2. 워커가 MP3 목록 탐색 후 완료 파일(`txt/json/srt` 무결성 기준) 스킵
-3. `TOTAL_FILES(전체/스킵/실처리)` 이벤트 전송
-4. 실처리 파일만 대상으로 `FILE_INDEX -> START_FILE -> FILE_DONE/FILE_FAIL`
-5. 완료 시 `ALL_DONE`, 중지 시 `STOPPED + ALL_STOPPED`, 치명 오류 시 `PROCESS_CRASHED`
+1. 과정명/과목명 선택값 기반 파일명 정규화 미리보기 후 승인
+2. GUI가 `QProcess`로 `auto_transcribe.py <runtime_folder> --upload-drive (옵션)` 실행
+3. 워커가 MP3 목록 탐색 후 완료 파일(`txt/json/srt` 무결성 기준) 스킵
+4. `TOTAL_FILES(전체/스킵/실처리)` 이벤트 전송
+5. 실처리 파일만 대상으로 `FILE_INDEX -> START_FILE -> FILE_DONE/FILE_FAIL` (Drive 업로드 설정 시 `FILE_DONE` 직전 업로드 수행)
+6. 완료 시 `ALL_DONE`, 중지 시 `STOPPED + ALL_STOPPED`, 치명 오류 시 `PROCESS_CRASHED`
 
 핵심 포인트
 - 진행률 분모는 전체 발견 수가 아닌 `이번 실행 실제 처리 파일 수`
+- 파일명 정규화: `과정명_과목명_N주차_N강` 형식으로 전사 시작 전 원본 MP3명 및 기존 결과물 rename
+- Google Drive 자동 업로드: `--upload-drive` 인자 전달 시 로컬 저장 완료 후 4종 파일 업로드
 - 결과 파일은 MP3와 같은 폴더에 저장
-- 파일명 끝 페이지 표기 패턴(`(p.12)`, `(p.12~34)`) 제거 기반으로 출력 basename 결정
 
 ## 6. Colab 전사 흐름
 1. GUI에서 `Colab Large-v3` 선택 시 URL 패널 표시
@@ -111,7 +114,8 @@ Colab 이어하기
 
 ## 8. UI 탭 구조
 - `Transcriptions`
-  - 큐 테이블, 실행 제어, 로그, 전사 방식 선택, Colab URL 영역
+  - 왼쪽 사이드바: `폴더 설정`, `전사 파일 분류(과정/과목)`, `Google Drive 업로드`, `알림 및 종료 옵션`, `실행 로그` (스크롤 영역 처리로 UI 잘림 방지)
+  - 메인 영역: 큐 테이블, 실행 제어, 전사 방식 선택, Colab URL 영역
 - `Dashboard`
   - `TOTAL DONE FILES`
   - `TOTAL AUDIO TIME`
@@ -143,11 +147,11 @@ Colab 이어하기
 
 ## 10. 최근 구현 상태
 - Colab 모드 연결 확인/전송/분할/병합/이어하기 구현됨
-- Dashboard/Folders 탭 구현됨
-- 트레이 + 커스텀 토스트 + 폴더 열기 버튼 동작
-- 전사 완료 후 종료 옵션(즉시/15초/30초) 구현됨
-- 시작 메뉴 바로가기 자동 생성 로직 포함
-- 아이콘 경로 탐색은 일반 실행/`frozen`/`_MEIPASS`/`_internal` 경로까지 포함
+- 트레이 + 커스텀 토스트 + 폴더 열기 버튼 동작 + 상황형 알림창 UI 및 톤 매너 최적화
+- GUI 과정명/과목명 선택값 기반 파일명 자동 정규화(`과정명_과목명_N주차_N강`) 구현
+- Google Drive 자동 업로드(MP3/TXT/JSON/SRT) 및 인증 권한 보호 연동 구현
+- 왼쪽 사이드바 UI 영역 분리(분류/Drive/옵션) 및 QScrollArea 적용 완료
+- PyInstaller 배포본 `auto_transcribe.py --upload-drive` 및 API 의존성 패키징 반영 성공
 
 ## 11. 작업 시 주의사항
 - 문서/코드 작업 시 현재 `gui_main.py`, `auto_transcribe.py`, `colab_transcribe.ipynb`를 기준으로 판단
