@@ -22124,6 +22124,24 @@ class TranscribeGUI(QWidget):
                     plans.append((row, src, p))
         return plans
 
+    def _friendly_filename_normalization_reason(self, error_text: str) -> str:
+        reason = str(error_text or "").strip()
+        reason_map = {
+            "과정명 감지 실패": "과정명 확인 필요",
+            "과목명 감지 실패": "과목명 확인 필요",
+            "주차 감지 실패": "주차 정보 확인 필요",
+            "강 번호 감지 실패": "강 번호 확인 필요",
+        }
+        return reason_map.get(reason, reason or "정보 확인 필요")
+
+    def _shorten_filename_for_dialog(self, filename: str, max_length: int = 28) -> str:
+        name = str(filename or "").strip()
+        if len(name) <= max_length:
+            return name
+        head_len = (max_length - 1) // 2
+        tail_len = max_length - 1 - head_len
+        return f"{name[:head_len]}…{name[-tail_len:]}"
+
     def _confirm_auto_filename_normalization(self, plans: list) -> bool:
         if not plans:
             return True
@@ -22135,8 +22153,20 @@ class TranscribeGUI(QWidget):
         if errors or conflicts:
             if errors:
                 title = "파일명을 정리할 수 없어요"
-                msg = "일부 파일의 과정명, 과목명 또는 주차 정보를 확인하지 못했습니다.\n파일명을 확인하거나 과정명/과목명을 선택한 뒤 다시 시도해 주세요.\n\n"
-                msg += f"오류 예: {errors[0].original_name} -> {errors[0].error}\n"
+                msg = (
+                    "일부 파일에서 과정명, 과목명 또는 주차 정보를 확인하지 못했습니다.\n\n"
+                    "파일명을 확인하거나, 전사 파일 분류에서 과정명/과목명을 선택한 뒤 다시 시도해 주세요.\n\n"
+                    "확인이 필요한 파일:\n"
+                )
+                display_count = 0
+                for p in errors:
+                    if display_count >= 3:
+                        msg += f"외 {len(errors) - 3}개\n"
+                        break
+                    shortened_name = self._shorten_filename_for_dialog(p.original_name)
+                    friendly_reason = self._friendly_filename_normalization_reason(p.error)
+                    msg += f"{shortened_name}\n사유: {friendly_reason}\n\n"
+                    display_count += 1
             else:
                 title = "같은 이름의 파일이 이미 있어요"
                 msg = "변경하려는 파일명과 같은 파일이 이미 존재합니다.\n기존 파일을 확인한 뒤 다시 시도해 주세요.\n\n"
