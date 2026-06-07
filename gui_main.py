@@ -5802,7 +5802,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        sidebar.setFixedWidth(300)
+        sidebar.setFixedWidth(360)
 
 
 
@@ -5898,7 +5898,7 @@ class TranscribeGUI(QWidget):
 
 
 
-        side_scroll.setFixedWidth(300)
+        side_scroll.setFixedWidth(360)
 
 
 
@@ -6189,163 +6189,119 @@ class TranscribeGUI(QWidget):
 
 
 
-        options = QGroupBox("")
+        # ── 전사 파일 분류 카드 ──
+        classify_card = QGroupBox("")
+        classify_card.setObjectName("SidebarCard")
+        classify_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        classify_box = QVBoxLayout(classify_card)
+        classify_box.setContentsMargins(16, 12, 16, 12)
+        classify_box.setSpacing(6)
 
+        self.label_section_classify = QLabel("전사 파일 분류", objectName="SectionTitle")
+        classify_box.addWidget(self.label_section_classify)
 
+        classify_desc = QLabel(
+            "과정명과 과목명은 다운로드 원본 파일명을 표준 파일명으로 바꾸고, "
+            "과목별 전사 보정 및 Google Drive 업로드 경로를 정하는 데 사용됩니다."
+        )
+        classify_desc.setWordWrap(True)
+        classify_desc.setObjectName("SidebarHintLabel")
+        classify_desc.setStyleSheet("color: #64748b; font-size: 11px; margin-bottom: 2px;")
+        classify_box.addWidget(classify_desc)
 
+        classify_box.addSpacing(2)
 
-
-        options.setObjectName("SidebarCard")
-
-
-
-
-
-        options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
-
-
-
-
-
-        obox = QVBoxLayout(options)
-
-
-
-
-
-        obox.setContentsMargins(16, 12, 16, 10)
-
-
-
-
-
-        obox.setSpacing(6)
-
-
-
-
-
-        self.label_section_options = QLabel("알림 및 종료 옵션", objectName="SectionTitle")
-
-
-
-
-
-        obox.addWidget(self.label_section_options)
-
-
-
-
-
-        self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
-
-
-
-
-
-        self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
-
-        self.course_subject_layout = QHBoxLayout()
-        self.course_subject_layout.addWidget(QLabel("과정명:"))
+        lbl_course = QLabel("과정명")
+        lbl_course.setStyleSheet("font-weight: 500; font-size: 12px;")
+        classify_box.addWidget(lbl_course)
         self.combo_transcribe_course = QComboBox()
         self.combo_transcribe_course.addItems(["", "개념완성", "기본이론", "기초이론"])
-        self.course_subject_layout.addWidget(self.combo_transcribe_course)
-        self.course_subject_layout.addWidget(QLabel("과목명:"))
+        self.combo_transcribe_course.setFixedHeight(34)
+        classify_box.addWidget(self.combo_transcribe_course)
+
+        classify_box.addSpacing(4)
+
+        lbl_subject = QLabel("과목명")
+        lbl_subject.setStyleSheet("font-weight: 500; font-size: 12px;")
+        classify_box.addWidget(lbl_subject)
         self.combo_transcribe_subject = QComboBox()
         self.combo_transcribe_subject.addItems(["", "부동산학개론", "민법", "공인중개사법", "부동산공법", "부동산공시법", "부동산세법"])
-        self.course_subject_layout.addWidget(self.combo_transcribe_subject)
-        self.course_subject_layout.addStretch(1)
-        self.upload_drive_checkbox = QCheckBox("전사 완료 후 Google Drive에 자동 업로드")
+        self.combo_transcribe_subject.setFixedHeight(34)
+        classify_box.addWidget(self.combo_transcribe_subject)
 
+        classify_box.addSpacing(6)
+
+        classify_warn = QLabel(
+            "선택한 과정/과목은 이번 전사 대상 파일 전체에 적용됩니다.\n"
+            "여러 과목 파일이 한 폴더에 섞여 있다면, 과목별로 체크해서 나누어 실행하세요."
+        )
+        classify_warn.setWordWrap(True)
+        classify_warn.setObjectName("SidebarWarnLabel")
+        classify_warn.setStyleSheet("color: #b45309; font-size: 11px; background: #fef3c7; border-radius: 4px; padding: 6px 8px;")
+        classify_box.addWidget(classify_warn)
+
+        left.addWidget(classify_card, 0)
+        self.group_classify = classify_card
+
+        # ── Google Drive 업로드 카드 ──
+        drive_card = QGroupBox("")
+        drive_card.setObjectName("SidebarCard")
+        drive_card.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        drive_box = QVBoxLayout(drive_card)
+        drive_box.setContentsMargins(16, 12, 16, 12)
+        drive_box.setSpacing(6)
+
+        self.label_section_drive = QLabel("Google Drive 업로드", objectName="SectionTitle")
+        drive_box.addWidget(self.label_section_drive)
+
+        self.upload_drive_checkbox = QCheckBox("Google Drive 자동 업로드")
+        drive_box.addWidget(self.upload_drive_checkbox)
+
+        drive_desc = QLabel(
+            "전사 완료 후 MP3, TXT, JSON, SRT 4종 파일을 기존 Google Drive "
+            "주차 폴더에 업로드합니다.\n"
+            "인증 파일이 없거나 손상된 경우 전사 시작 전 안내됩니다."
+        )
+        drive_desc.setWordWrap(True)
+        drive_desc.setObjectName("SidebarHintLabel")
+        drive_desc.setStyleSheet("color: #64748b; font-size: 11px;")
+        drive_box.addWidget(drive_desc)
+
+        left.addWidget(drive_card, 0)
+        self.group_drive = drive_card
+
+        # ── 알림 및 종료 옵션 카드 ──
+        options = QGroupBox("")
+        options.setObjectName("SidebarCard")
+        options.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Maximum)
+        obox = QVBoxLayout(options)
+        obox.setContentsMargins(16, 12, 16, 10)
+        obox.setSpacing(6)
+
+        self.label_section_options = QLabel("알림 및 종료 옵션", objectName="SectionTitle")
+        obox.addWidget(self.label_section_options)
+
+        self.chk_notify_each_file = QCheckBox("파일별 완료 알림 켜기")
+        self.chk_notify_total = QCheckBox("전체 완료 알림 켜기")
         self.shutdown_checkbox = QCheckBox("전체 전사 완료 후 컴퓨터 종료")
 
-
-
-
-
         self.shutdown_wait_combo = QComboBox()
-
-
-
-
-
         self.shutdown_wait_combo.setObjectName("ShutdownWaitCombo")
-
-
-
-
-
         self.shutdown_wait_combo.setFixedHeight(34)
-
-
-
-
-
         for seconds, label in SHUTDOWN_WAIT_OPTIONS:
-
-
-
-
-
             self.shutdown_wait_combo.addItem(label, seconds)
-
-
-
-
-
         self.shutdown_wait_combo.setCurrentIndex(0)
-
-
-
-
-
         self.shutdown_wait_combo.setEnabled(False)
 
-
-
-
-
         self.chk_notify_each_file.setChecked(True)
-
-
-
-
-
         self.chk_notify_total.setChecked(True)
 
-
-
-
-
         obox.addWidget(self.chk_notify_each_file)
-
-
-
-
-
         obox.addWidget(self.chk_notify_total)
-
-        obox.addLayout(self.course_subject_layout)
-        obox.addWidget(self.upload_drive_checkbox)
-
         obox.addWidget(self.shutdown_checkbox)
-
-
-
-
-
         obox.addWidget(self.shutdown_wait_combo)
 
-
-
-
-
         left.addWidget(options, 0)
-
-
-
-
-
         self.group_options = options
 
 
@@ -6424,7 +6380,8 @@ class TranscribeGUI(QWidget):
 
 
 
-        self.log_viewer.setMinimumHeight(0)
+        self.log_viewer.setMinimumHeight(160)
+        self.log_viewer.setMaximumHeight(220)
 
 
 
@@ -22107,7 +22064,14 @@ class TranscribeGUI(QWidget):
         if not rename_needed:
             return True
 
-        msg = "전사 시작 전 파일명을 표준명으로 변경합니다.\n\n"
+        sel_c = self.combo_transcribe_course.currentText().strip()
+        sel_s = self.combo_transcribe_subject.currentText().strip()
+        msg = "아래 파일명이 전사 시작 전에 표준 형식으로 변경됩니다.\n"
+        msg += "표준 형식: 과정명_과목명_N주차_N강\n"
+        if sel_c or sel_s:
+            msg += f"적용 과정명: {sel_c or '(자동)'}\n"
+            msg += f"적용 과목명: {sel_s or '(자동)'}\n"
+        msg += "\n"
         
         display_count = 0
         for p in rename_needed:
@@ -24604,16 +24568,25 @@ class TranscribeGUI(QWidget):
         if not selected_course or not selected_subject:
             self.show_warning_message(
                 "선택 필요",
-                "과정명과 과목명을 먼저 선택해 주세요.\n\n다운로드 원본 파일명은 과목을 자동 판별하기 어렵습니다.\n전사할 파일의 과정명과 과목명을 선택한 뒤 다시 시작해 주세요."
+                "과정명과 과목명을 먼저 선택해 주세요.\n\n"
+                "다운로드 원본 파일명에는 과목명이 포함되지 않는 경우가 많아,\n"
+                "정확한 파일명 정리와 과목별 전사 보정을 위해 선택이 필요합니다."
             )
             return
 
         has_selected_runtime_items = self.run_mode in ("selected", "all", "moved") and bool(self.selected_run_items)
         if not has_selected_runtime_items and self.target_folder:
+            _file_count = len(self.file_queue_rows) if self.file_queue_rows else 0
             reply = QMessageBox.question(
                 self,
                 "전체 폴더 대상 과정/과목 적용",
-                f"현재 폴더 전체 파일에 선택한 과정/과목이 적용됩니다.\n\n과정명: {selected_course}\n과목명: {selected_subject}\n\n여러 과목 파일이 섞여 있다면 취소 후 과목별로 체크해서 나누어 실행하세요.\n계속 진행할까요?",
+                f"현재 선택한 과정/과목이 이번 전사 대상 전체에 적용됩니다.\n\n"
+                f"과정명: {selected_course}\n"
+                f"과목명: {selected_subject}\n"
+                f"대상 파일 수: {_file_count}개\n\n"
+                f"여러 과목 파일이 섞여 있다면 [취소]를 누르고,\n"
+                f"과목별로 파일을 체크해서 나누어 실행하세요.\n\n"
+                f"계속 진행할까요?",
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No
             )
