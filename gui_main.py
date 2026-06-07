@@ -17555,7 +17555,7 @@ class TranscribeGUI(QWidget):
         if not self.btn_colab_check.property("connected") or not transcribe_url:
             self.show_warning_message(
                 "Colab URL을 입력해 주세요",
-                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\n"
+                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\\n\\n"
                 "Colab에서 출력된 https://...trycloudflare.com 주소를 입력한 뒤 연결을 확인해 주세요."
             )
             self.set_transcribe_buttons_enabled(True)
@@ -17905,7 +17905,7 @@ class TranscribeGUI(QWidget):
             else:
                 self.show_warning_message(
                     "Colab URL을 찾을 수 없어요",
-                    "클립보드에서 trycloudflare 주소를 찾지 못했습니다.\n"
+                    "클립보드에서 trycloudflare 주소를 찾지 못했습니다.\\n\\n"
                     "Colab 출력창의 https://...trycloudflare.com 주소를 복사한 뒤 다시 시도해 주세요."
                 )
         except Exception as e:
@@ -17916,7 +17916,7 @@ class TranscribeGUI(QWidget):
         if not colab_url:
             self.show_warning_message(
                 "Colab URL을 입력해 주세요",
-                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\n"
+                "Colab Large-v3 전사를 사용하려면 Colab 서버 주소가 필요합니다.\\n\\n"
                 "Colab에서 출력된 https://...trycloudflare.com 주소를 입력한 뒤 연결을 확인해 주세요."
             )
             return
@@ -17924,7 +17924,7 @@ class TranscribeGUI(QWidget):
         if not health_url:
             self.show_warning_message(
                 "Colab에 연결하지 못했어요",
-                "입력한 URL로 Colab 서버에 연결할 수 없습니다.\n"
+                "입력한 URL로 Colab 서버에 연결할 수 없습니다.\\n\\n"
                 "노트북 서버 셀이 실행 중인지, trycloudflare 주소가 정확한지 확인해 주세요."
             )
             return
@@ -17952,7 +17952,7 @@ class TranscribeGUI(QWidget):
             self._colab_check_connected = True
             self.label_colab_last_comm.setText("상태: 연결됨 ✓")
             self._update_colab_check_button_state()
-            self.show_info_message("알림", "Colab 연결 성공")
+            self.show_info_message("Colab 연결 성공", "입력한 URL로 Colab 서버와 정상적으로 연결되었습니다.")
             return
 
         self._colab_check_connected = False
@@ -17960,7 +17960,7 @@ class TranscribeGUI(QWidget):
         self._update_colab_check_button_state()
         self.show_warning_message(
             "Colab에 연결하지 못했어요",
-            "입력한 URL로 Colab 서버에 연결할 수 없습니다.\n"
+            "입력한 URL로 Colab 서버에 연결할 수 없습니다.\\n\\n"
             "노트북 서버 셀이 실행 중인지, trycloudflare 주소가 정확한지 확인해 주세요."
         )
 
@@ -18429,7 +18429,7 @@ class TranscribeGUI(QWidget):
         normalized = self._normalize_saved_folder_path(folder)
         if not normalized or not os.path.isdir(normalized):
             if show_empty_message:
-                self.show_warning_message("\uACBD\uACE0", "\uC120\uD0DD\uD55C \uD3F4\uB354\uB97C \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.")
+                self.show_warning_message("폴더를 찾을 수 없어요", "선택한 폴더가 존재하지 않거나 삭제되었습니다.\\n\\n올바른 폴더를 다시 선택해 주세요.")
             return False
 
         mp3_paths = []
@@ -19218,7 +19218,7 @@ class TranscribeGUI(QWidget):
         self._cleanup_selected_runtime_folder()
 
         if not self.selected_run_items:
-            self.show_warning_message("\uACBD\uACE0", "\uC120\uD0DD \uC804\uC0AC \uB300\uC0C1 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.")
+            self.show_warning_message("불러온 파일이 없어요", "선택된 전사 대상 파일이 없습니다.\\n\\n파일을 체크한 뒤 다시 시도해 주세요.")
             return False
 
         runtime_parent = self._runtime_parent_for_selected_items()
@@ -19290,7 +19290,7 @@ class TranscribeGUI(QWidget):
 
         if not runtime_entries:
             self._cleanup_selected_runtime_folder()
-            self.show_warning_message("\uACBD\uACE0", "\uC120\uD0DD\uD55C MP3\uB97C \uC804\uC0AC \uB300\uC0C1\uC73C\uB85C \uC900\uBE44\uD558\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.")
+            self.show_warning_message("MP3 파일을 찾을 수 없어요", "선택한 폴더에 전사할 MP3 파일이 없습니다.\\n\\n다른 폴더를 선택하거나 MP3 파일을 추가한 뒤 다시 시도해 주세요.")
             return False
 
         self.selected_runtime_folder = runtime_folder
@@ -20113,6 +20113,13 @@ class TranscribeGUI(QWidget):
 
 
 
+    def _normalize_dialog_text(self, value: str) -> str:
+        text = str(value or "")
+        text = text.replace("\\r\\n", "\n")
+        text = text.replace("\\n", "\n")
+        text = text.replace("\\t", "\t")
+        return text.strip()
+
     def _pick_message_icon(self, icon):
 
 
@@ -20209,7 +20216,8 @@ class TranscribeGUI(QWidget):
 
 
 
-        dialog.setWindowTitle((title or "").strip() or APP_DISPLAY_NAME)
+        norm_title = self._normalize_dialog_text(title)
+        dialog.setWindowTitle(norm_title or APP_DISPLAY_NAME)
 
 
 
@@ -20291,7 +20299,8 @@ class TranscribeGUI(QWidget):
             icon_label.setPixmap(picked_icon.pixmap(24, 24))
         header_row.addWidget(icon_label, 0, Qt.AlignVCenter)
 
-        heading = QLabel((title or "").strip() or APP_DISPLAY_NAME)
+        norm_title = self._normalize_dialog_text(title)
+        heading = QLabel(norm_title or APP_DISPLAY_NAME)
         heading.setObjectName("MessageHeading")
         heading.setWordWrap(True)
         heading.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
@@ -20299,7 +20308,8 @@ class TranscribeGUI(QWidget):
 
         content_layout.addLayout(header_row)
 
-        body = QLabel((message or "").strip() or "표시할 메시지가 없습니다.")
+        norm_msg = self._normalize_dialog_text(message)
+        body = QLabel(norm_msg or "표시할 메시지가 없습니다.")
         body.setObjectName("MessageText")
         body.setWordWrap(True)
         body.setAlignment(Qt.AlignLeft | Qt.AlignTop)
@@ -21896,14 +21906,14 @@ class TranscribeGUI(QWidget):
             self.update_total_progress_display()
             self._refresh_file_list_empty_state()
         except Exception as e:
-            self.show_error_message("\uC624\uB958", f"\uD30C\uC77C \uBAA9\uB85D\uC744 \uBD88\uB7EC\uC624\uC9C0 \uBABB\uD588\uC2B5\uB2C8\uB2E4.\\n\\n{e}")
+            self.show_error_message("파일 목록을 불러오지 못했어요", f"파일 목록을 불러오지 못했습니다.\\n\\n{e}")
 
     def move_selected_files_core(self, destination_folder: str, refresh_queue: bool = True):
         dst_root = self._normalize_saved_folder_path(destination_folder)
         self.append_log_text(f"[DBG] move_selected_files_core: destination_folder={dst_root!r}\\n", force=True)
 
         if not dst_root:
-            self.show_warning_message("\uACBD\uACE0", "\uC774\uB3D9 \uB300\uC0C1 \uD3F4\uB354\uB97C \uC120\uD0DD\uD574 \uC8FC\uC138\uC694.")
+            self.show_warning_message("폴더를 선택해 주세요", "이동 대상 폴더를 선택해 주세요.")
             return None
 
         selected_rows = self._get_checked_queue_rows()
@@ -22191,7 +22201,7 @@ class TranscribeGUI(QWidget):
 
     def start_transcribe_on_target_folder(self):
         if not self.file_queue_rows:
-            self.show_warning_message("\uACBD\uACE0", "\uC804\uC0AC\uD560 \uD30C\uC77C\uC774 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uBA3C\uC800 MP3 \uD30C\uC77C\uC744 \uBD88\uB7EC\uC624\uC138\uC694.")
+            self.show_warning_message("불러온 파일이 없어요", "전사를 시작하려면 MP3 파일을 먼저 추가해 주세요.\\n\\n[폴더 선택] 또는 [파일 선택] 버튼으로 파일을 불러오면 바로 시작할 수 있어요.")
             return
 
         checked_rows = self._get_checked_queue_rows()
@@ -24617,7 +24627,7 @@ class TranscribeGUI(QWidget):
         cred_path, token_path = self._get_google_drive_auth_paths()
         self.show_warning_message(
             "Google Drive 인증이 필요해요",
-            "자동 업로드를 사용하려면 Google Drive 인증 파일이 필요합니다.\n"
+            "자동 업로드를 사용하려면 Google Drive 인증 파일이 필요합니다.\\n\\n"
             "인증 파일을 확인한 뒤 다시 시도해 주세요."
         )
 
@@ -24631,8 +24641,8 @@ class TranscribeGUI(QWidget):
         if not selected_course or not selected_subject:
             self.show_warning_message(
                 "과정명과 과목명을 선택해 주세요",
-                "다운로드 원본 파일명에는 과목명이 포함되지 않는 경우가 많아,\n"
-                "정확한 파일명 정리와 과목별 전사 보정을 위해 선택이 필요합니다."
+                "전사를 실행하려면 과정명과 과목명을 모두 선택해야 합니다.\\n\\n"
+                "목록에서 선택하거나 직접 입력해 주세요."
             )
             return
 
@@ -24653,11 +24663,11 @@ class TranscribeGUI(QWidget):
 
         engine = self._current_transcription_engine()
         if not self.target_folder and not has_selected_runtime_items:
-            self.show_warning_message("\uACBD\uACE0", "\uBA3C\uC800 \uC804\uC0AC \uD3F4\uB354 \uB610\uB294 \uD30C\uC77C \uBAA9\uB85D\uC744 \uC900\uBE44\uD574 \uC8FC\uC138\uC694.")
+            self.show_warning_message("불러온 파일이 없어요", "전사할 MP3 파일 목록을 먼저 준비해 주세요.")
             return
 
         if self._is_transcribe_running():
-            self.show_warning_message("\uACBD\uACE0", "\uC774\uBBF8 \uC804\uC0AC \uC791\uC5C5\uC774 \uC9C4\uD589 \uC911\uC785\uB2C8\uB2E4.")
+            self.show_warning_message("작업이 진행 중이에요", "이미 전사 작업이 실행 중입니다.\\n\\n현재 작업이 완료된 후 다시 시도해 주세요.")
             return
 
         if engine == "colab":
@@ -24672,7 +24682,7 @@ class TranscribeGUI(QWidget):
         else:
             auto_path = self.get_auto_transcribe_path()
             if not os.path.exists(auto_path):
-                self.show_error_message("\uC624\uB958", f"auto_transcribe.py \uD30C\uC77C\uC744 \uCC3E\uC744 \uC218 \uC5C6\uC2B5\uB2C8\uB2E4.\\n\\n\uD655\uC778 \uACBD\uB85C:\\n{auto_path}")
+                self.show_error_message("실행 파일을 찾을 수 없어요", f"전사 실행에 필요한 auto_transcribe.py 파일이 없습니다.\\n\\n확인 경로:\\n{auto_path}")
                 return
 
         runtime_folder = self.target_folder if self.target_folder else self.get_base_dir()
