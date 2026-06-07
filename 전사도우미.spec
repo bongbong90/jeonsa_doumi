@@ -39,12 +39,25 @@ class CollectWithRootAutoTranscribe(COLLECT):
             except Exception as e:
                 print(f"[SPEC][WARN] google_drive_uploader.py 루트 배치 실패: {e}")
 
+        # Copy colab_transcribe.ipynb
+        src3 = Path("colab_transcribe.ipynb").resolve()
+        if src3.exists() and dst_dir.exists():
+            dst3 = dst_dir / "colab_transcribe.ipynb"
+            try:
+                if not (dst3.exists() and src3.resolve() == dst3.resolve()):
+                    shutil.copy2(src3, dst3)
+                    print(f"[SPEC] colab_transcribe.ipynb 루트 배치 완료: {dst3}")
+                else:
+                    print(f"[SPEC] colab_transcribe.ipynb 루트 배치 유지됨: {dst3}")
+            except Exception as e:
+                print(f"[SPEC][WARN] colab_transcribe.ipynb 루트 배치 실패: {e}")
+
 
 a = Analysis(
     ["gui_main.py"],
     pathex=[],
     binaries=[],
-    datas=[("assets", "assets"), ("transcribe_helper.ico", "."), ("auto_transcribe.py", "."), ("prompts", "prompts"), ("corrections", "corrections")],
+    datas=[("assets", "assets"), ("transcribe_helper.ico", "."), ("auto_transcribe.py", "."), ("prompts", "prompts"), ("corrections", "corrections"), ("colab_transcribe.ipynb", ".")],
     hiddenimports=[
         "google_drive_uploader",
         "googleapiclient",
