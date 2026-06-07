@@ -63,14 +63,19 @@
 
 ## 6. Colab 전사 흐름
 1. GUI에서 `Colab Large-v3` 선택 시 URL 패널 표시
-2. `연결 확인` 버튼으로 `/health` 호출
-3. 성공 시 버튼 텍스트 `연결됨 ✓`
-4. 전사 시작 시 URL을 `/transcribe`로 정규화
-5. `ffmpeg` 확인 후 MP3를 600초 단위 분할(`chunk_%04d.mp3`)
-6. 조각별 `/transcribe` 요청 후 segment offset 보정 병합
-7. 병합 결과를 `TXT/JSON/SRT` 저장
-8. 조각 폴더 정리 후 다음 파일 처리
-9. 중지 요청 시 현재 조각 완료 후 `ALL_STOPPED`
+2. 앱의 `클립보드에서 가져오기` 버튼으로 클립보드 텍스트에서 `https://...trycloudflare.com` URL을 자동 추출
+3. URL에 `/health`, `/transcribe`, 공백, 줄바꿈 등이 붙어 있어도 base URL만 추출
+4. `연결 확인` 버튼으로 `/health` 호출
+5. 성공 시 버튼 텍스트 `연결됨 ✓`
+6. 전사 시작 시 GUI 선택 과목명 기준 prompt를 로드
+7. prompt는 앱에서 multipart form-data로 `initial_prompt`와 `subject`를 전송
+8. Colab notebook은 prompt를 받아 `faster-whisper` 전사에만 사용
+9. corrections 파일은 노트북으로 전송되지 않음
+10. 앱이 chunk 결과를 수신하고 segment offset을 보정해 `merged_result`를 생성
+11. 저장 직전에 `common_terms.json` + 과목별 JSON corrections를 `text`와 `segments` 모두에 적용
+12. `TXT/JSON/SRT` 저장
+13. 조각 폴더 정리 후 다음 파일 처리
+14. 중지 요청 시 현재 조각 완료 후 `ALL_STOPPED`
 
 노트북 서버 구조
 - Flask + CORS
@@ -147,7 +152,10 @@ Colab 이어하기
 
 ## 10. 최근 구현 상태
 - Colab 모드 연결 확인/전송/분할/병합/이어하기 구현됨
+- Colab Large-v3에서 과목별 prompt 전달 및 앱 corrections 후처리 적용 구현됨
+- 클립보드 URL 자동 추출/연결 확인 UX 개선 및 상태 문구 간소화 구현됨
 - 트레이 + 커스텀 토스트 + 폴더 열기 버튼 동작 + 상황형 알림창 UI 및 톤 매너 최적화
+- 알림창 본문 줄바꿈 정규화 처리(`\n\n` 문자열 노출 방지) 적용됨
 - GUI 과정명/과목명 선택값 기반 파일명 자동 정규화(`과정명_과목명_N주차_N강`) 구현
 - Google Drive 자동 업로드(MP3/TXT/JSON/SRT) 및 인증 권한 보호 연동 구현
 - 왼쪽 사이드바 UI 영역 분리(분류/Drive/옵션) 및 QScrollArea 적용 완료

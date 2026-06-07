@@ -7,9 +7,13 @@
 전사도우미의 Colab 모드는 로컬 Whisper 대신 Colab 서버(`faster-whisper large-v3`)를 사용합니다.  
 GUI는 MP3를 600초 단위로 분할 전송하고, 응답 segment를 시간 오프셋 보정해 하나의 결과로 병합합니다.
 
+Colab Large-v3 전사는 GUI에서 선택한 과목명 기준 prompt를 앱이 로드하고, prompt는 Colab `/transcribe` 요청의 multipart form-data로 `initial_prompt`와 함께 전달됩니다.  
+Colab 서버는 prompt 기반 전사만 수행하고 corrections 파일은 노트북으로 보내지지 않습니다.  
+앱은 chunk 결과를 수신한 다음 segment offset을 보정해 `merged_result`를 만든 뒤, 저장 직전에 `common_terms.json`과 과목별 JSON corrections를 `text`와 `segments`에 적용해 TXT/JSON/SRT를 생성합니다.
+
 ## 2. GUI에서의 실행 조건
 1. 전사 방식이 `Colab Large-v3`여야 함
-2. Colab URL 입력 필요
+2. Colab URL 입력 또는 `클립보드에서 가져오기` 버튼으로 URL 추출 필요
 3. `연결 확인` 성공 상태(`연결됨 ✓`) 필요
 4. `ffmpeg`가 PATH에 있어야 함
 
@@ -17,6 +21,7 @@ GUI는 MP3를 600초 단위로 분할 전송하고, 응답 segment를 시간 오
 
 ## 3. Colab URL 정규화 규칙
 - 스킴이 없으면 `https://` 자동 보정
+- 클립보드에서 URL을 가져올 때 `/health`, `/transcribe`, 공백, 줄바꿈 등이 붙어 있어도 base URL만 추출
 - 경로 끝이 `/health` 또는 `/transcribe`이면 해당 접미를 제거 후 대상 엔드포인트 재조립
 - 연결 확인용 URL: `.../health`
 - 전사용 URL: `.../transcribe`
@@ -25,13 +30,20 @@ GUI는 MP3를 600초 단위로 분할 전송하고, 응답 segment를 시간 오
 1. 원본 MP3를 임시 폴더 `colab_chunks_*`에 분할
 2. 분할 단위: 600초 (`COLAB_CHUNK_SECONDS`)
 3. 파일명: `chunk_0000.mp3`, `chunk_0001.mp3`, ...
-4. 각 조각을 multipart/form-data로 `/transcribe` POST
-5. 조각별 결과의 segment에 `offset` 적용
-6. 병합 결과 생성:
+4. GUI에서 선택한 과목명 기준 prompt를 로드
+5. 각 조각을 multipart/form-data로 `/transcribe` POST, `initial_prompt`와 `subject`를 함께 전달
+6. Colab 서버는 prompt를 수신하고 `faster-whisper model.transcribe()` 호출 시 조건부로 전달
+7. Colab 서버는 전사만 수행하고 corrections 파일은 노트북으로 보내지지 않음
+8. 조각별 결과의 segment에 `offset` 적용
+9. 앱이 chunk 결과를 수신하고 전체 `merged_result`를 생성
    - `text`: 조각 text 결합
    - `segments`: 보정된 전구간 segment 목록
-7. 저장: MP3와 같은 폴더에 `TXT/JSON/SRT`
-8. 임시 chunk 폴더 정리
+10. 저장 직전에 corrections를 적용
+    - `common_terms.json` + 과목별 JSON
+    - `text`와 `segments` 모두 대상
+11. 병합 결과를 `TXT/JSON/SRT`로 저장
+12. 임시 chunk 폴더(`colab_chunks_*`)는 처리 후 정리
+13. 중지 요청 시 현재 조각 완료 후 중단
 
 ## 5. Colab 중지 동작
 - GUI `전사중지` 시 Colab은 즉시 프로세스 kill이 아니라 `현재 조각 완료 후 중단` 정책
@@ -83,3 +95,17 @@ GUI는 MP3를 600초 단위로 분할 전송하고, 응답 segment를 시간 오
 ## 8. GUI와 노트북 API 사용 관계
 - 현재 GUI Colab 전사는 `/transcribe`(legacy 동기 응답) 사용
 - 노트북에는 비동기 `/jobs` 계열 API도 존재하지만, GUI 기본 경로는 legacy `/transcribe`입니다.
+
+## 9. 검증 완료
+- Mock Colab 서버로 `/health` 및 `/transcribe` 흐름 확인
+- PySide6 테스트 스크립트로 GUI 연결 UX 확인
+- 클립보드 URL 추출 확인
+- 잘못된 URL 연결 실패 알림 확인
+- 정상 URL 연결 시 `상태: 연결됨 ✓` 확인
+- `initial_prompt`, `subject` multipart 전송 확인
+- 과목별 prompt 로드 확인
+- `common_terms.json` + 과목별 corrections 로드 확인
+- corrections 적용 후 TXT/JSON/SRT 생성 확인
+- 다운로드 원본명 → 표준명 rename 확인
+- Google Drive OFF 상태에서 Drive 이벤트 미발생 확인
+- 테스트 산출물 삭제 완료
