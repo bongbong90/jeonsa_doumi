@@ -6223,8 +6223,7 @@ class TranscribeGUI(QWidget):
         classify_box.addSpacing(2)
 
         lbl_course = QLabel("과정명:")
-        lbl_course.setFont(font_label)
-        lbl_course.setStyleSheet("color: #334155; margin-left: 10px;")
+        lbl_course.setStyleSheet("color: #334155; margin-left: 10px; font-weight: 500; font-size: 12px;")
         classify_box.addWidget(lbl_course)
         self.combo_transcribe_course = QComboBox()
         self.combo_transcribe_course.setObjectName("CourseCombo")
@@ -6235,8 +6234,7 @@ class TranscribeGUI(QWidget):
         classify_box.addSpacing(4)
 
         lbl_subject = QLabel("과목명:")
-        lbl_subject.setFont(font_label)
-        lbl_subject.setStyleSheet("color: #334155; margin-left: 10px;")
+        lbl_subject.setStyleSheet("color: #334155; margin-left: 10px; font-weight: 500; font-size: 12px;")
         classify_box.addWidget(lbl_subject)
         self.combo_transcribe_subject = QComboBox()
         self.combo_transcribe_subject.setObjectName("SubjectCombo")
