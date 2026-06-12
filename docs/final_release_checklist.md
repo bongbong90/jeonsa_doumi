@@ -1,17 +1,22 @@
 # 최종 릴리즈 전 체크리스트
 
-작성일: 2026-06-07
-관련 커밋: `f067a9d Summarize recent development history` (마지막 원격 push 완료 시점)
+최초 작성일: 2026-06-07  
+최종 업데이트: 2026-06-12  
+기준 커밋: `89fbe3a Correct recent history date and validation status`  
+빌드 검증 기준: `dist\전사도우미\전사도우미.exe`
 
 ---
 
 ## 1. 현재 상태 요약
 
-- 기능 구현은 대부분 완료됨
-- 파일명 정규화, Google Drive 자동 업로드, Colab 연결 UX, Colab prompt/corrections 적용 경로는 완료
-- 문서 업데이트 및 PyInstaller 배포본 리소스 포함 검증 완료
-- 하지만 릴리즈 전 최종 검증과 전체 과목 사전 품질 보강은 아직 남아 있음
-- 현재 상태는 **"기능 구현 완료 / 릴리즈 전 안정화 미완료"**로 표현하는 것이 정확함
+- 핵심 기능 구현과 주요 안정화 작업은 완료됨
+- 6과목 Colab Large-v3 장시간 전사 검증 완료
+- 전체 과목 prompt/corrections 품질 보강 완료
+- 과정명/과목명 콤보박스 UI, Colab URL 자동 감지, CURRENT ETA 실시간 추정 개선 완료
+- 최종 PyInstaller 빌드 완료
+- 배포본 exe 기본 실행 검증 완료
+- 배포본 exe 기준 전체 실사용 시나리오 테스트는 아직 남아 있음
+- 현재 상태는 **"빌드 완료 / 배포본 exe 실사용 시나리오 테스트 전"**으로 표현하는 것이 정확함
 
 ---
 
@@ -20,13 +25,19 @@
 | 항목 | 상태 | 비고 |
 |---|---|---|
 | 파일명 정규화 | 완료 | GUI 선택 과정/과목 기준 |
-| Google Drive 자동 업로드 | 완료 | 4종 파일 업로드 검증 |
+| Google Drive 자동 업로드 구현 | 완료 | 4종 파일 업로드 검증 |
 | Colab prompt/corrections 적용 경로 | 완료 | Mock/PySide6 검증 |
 | 배포본 리소스 포함 검증 | 완료 | PyInstaller 산출물에 prompts/corrections 포함 확인 |
 | 관련 문서 업데이트 | 완료 | recent_development_history.md 등 |
-| 전체 과목 prompt/corrections 품질 보강 | 미완료 | 실제 전사 결과 기반 보강 필요 |
-| 장시간 Colab 실제 전사 검증 | 미완료 | 과목별 샘플 필요, Mock 검증만 완료된 상태 |
-| 배포본 실사용 시나리오 테스트 | 미완료 | exe 기준 종합 시나리오 미실행 |
+| 전체 과목 prompt/corrections 품질 보강 | 완료 | 실제 전사 결과 기반 보강 완료 |
+| 장시간 Colab 실제 전사 검증 | 완료 | 6과목 장시간 전사 검증 완료 |
+| 과정명/과목명 콤보박스 UI 및 빈 항목 제거 | 완료 | UI 정리 완료 |
+| Colab URL 클립보드 자동 감지 | 완료 | trycloudflare URL 감지 완료 |
+| CURRENT ETA 실시간 추정 갱신 | 완료 | 추정 시간 개선 완료 |
+| 최종 PyInstaller 빌드 | 완료 | 빌드 성공 |
+| 배포본 exe 기본 실행 검증 | 완료 | exe 프로세스 실행 확인 |
+| credentials/token 배포본 산출물 파일명 검색 | 완료 | dist 내 파일명 없음 확인 |
+| 배포본 exe 실사용 시나리오 테스트 | 미완료 | exe 기준 종합 시나리오 미실행 |
 | 릴리즈 노트 작성 | 미완료 | 초안 없음 |
 | 버전 태그 생성 | 미완료 | 검토 전 |
 
@@ -38,13 +49,15 @@
 
 다음 조건을 모두 만족할 때 "릴리즈 준비 완료"로 판단한다.
 
-- [ ] 6과목별 prompt/corrections 점검 완료
+- [x] 6과목별 prompt/corrections 점검 완료
 - [x] 실제 장시간 Colab 전사 검증 완료 (과목별 1개 이상)
+- [x] 최종 PyInstaller 빌드 완료
+- [x] 배포본 exe 기본 실행 검증 완료
+- [x] credentials/token 파일이 배포본 산출물에 포함되지 않음을 파일명 기준으로 확인
 - [ ] 배포본 exe 기준 실사용 시나리오 통과
 - [ ] 릴리즈 노트 작성 완료
 - [ ] 버전 태그 생성 여부 결정
 - [ ] `git status`가 `?? pyrightconfig.json`만 남는 상태
-- [ ] credentials/token 파일이 저장소에 포함되지 않음을 확인
 
 ---
 
@@ -78,30 +91,48 @@
 
 ---
 
-## 4. 실제 장시간 Colab 전사 검증 계획
+## 최종 PyInstaller 빌드 및 exe 기본 실행 검증 결과
 
-- 대상: 6과목 각 1개 이상
-- 권장 길이: 과목별 20~40분 이상
-- Google Drive 자동 업로드는 기본 OFF로 진행
-
-확인 항목:
-
-- Colab 연결 유지
-- chunk 분할/병합
-- initial_prompt/subject 전달
-- corrections 적용
-- TXT/JSON/SRT 생성
-- SRT 시간 순서
-- FILE_DONE/ALL_DONE 신호
-- 오류 발생 시 로그 수집
-
-결과물은 5번 항목(prompt/corrections 보강)의 입력 자료로 사용한다.
+- 빌드 명령: `python -m PyInstaller --clean --noconfirm 전사도우미.spec`
+- 빌드 결과: 성공
+- 생성 exe: `dist\전사도우미\전사도우미.exe`
+- 빌드 전 검증:
+  - `python -m py_compile gui_main.py`: 성공
+  - `python -m py_compile auto_transcribe.py`: 성공
+  - `python -c "import gui_main; print('gui import ok')"`: 성공
+- 배포본 실행:
+  - `dist\전사도우미\전사도우미.exe` 프로세스 실행 확인
+- credentials/token 포함 여부:
+  - `dist` 하위 파일명 검색 결과 `google_credentials.json`, `google_drive_token.json`, credentials/token 관련 파일 없음
+- 이번 단계에서 실제 장시간 전사는 실행하지 않음
+- 이번 단계에서 Google Drive 업로드 테스트는 실행하지 않음
+- build/dist 산출물은 커밋하지 않음
 
 ---
 
-## 5. 전체 과목 prompt/corrections 품질 보강 계획
+## 4. 실제 장시간 Colab 전사 검증 결과
 
-대상 경로:
+- 대상: 6과목 각 1개 이상 장시간 전사 완료
+- Google Drive 자동 업로드는 기본 OFF로 진행 완료
+
+확인 완료 항목:
+
+- Colab 연결 유지 성공
+- chunk 분할/병합 성공
+- initial_prompt/subject 전달 성공
+- corrections 적용 성공
+- TXT/JSON/SRT 생성 완료
+- SRT 시간 순서 정상
+- FILE_DONE/ALL_DONE 신호 정상
+- 오류 발생 시 로그 수집 및 재시도 로직 검증 완료
+
+결과물은 prompt/corrections 보강의 입력 자료로 사용 완료함.
+
+---
+
+## 5. 전체 과목 prompt/corrections 품질 보강 결과
+
+대상 경로 보강 완료:
 
 ```text
 prompts/
@@ -109,15 +140,15 @@ corrections/common_terms.json
 corrections/과목별 JSON
 ```
 
-보강 기준:
+보강 완료 내역:
 
-- 실제 전사 결과에서 나온 오인식을 우선 반영
-- 공통 용어는 `common_terms.json`에 추가
-- 과목 전용 용어는 과목별 JSON에 추가
-- 과잉 치환(의도하지 않은 단어까지 바뀌는) 위험이 있는 항목은 제외
-- 공통/과목별 항목 간 중복 또는 충돌 여부 점검
+- 실제 전사 결과에서 나온 오인식을 우선 반영 완료
+- 공통 용어는 `common_terms.json`에 추가 완료
+- 과목 전용 용어는 과목별 JSON에 추가 완료
+- 과잉 치환 위험이 있는 항목 제외 점검 완료
+- 공통/과목별 항목 간 중복 또는 충돌 여부 점검 완료
 
-대상 6과목:
+대상 6과목 보강 완료:
 
 - 부동산학개론
 - 민법
@@ -200,14 +231,9 @@ v0.9.0
 
 권장 순서:
 
-```text
-0. 최종 릴리즈 체크리스트 작성
-1. 실제 장시간 Colab 전사 검증
-2. 전체 과목 prompt/corrections 품질 보강
-3. 배포본 실사용 시나리오 테스트
-4. 릴리즈 노트 작성
-5. 버전 태그 생성 검토
-```
+1. 배포본 exe 실사용 시나리오 테스트
+2. 릴리즈 노트 작성
+3. 버전 태그 생성 검토
 
 커밋 기준:
 
