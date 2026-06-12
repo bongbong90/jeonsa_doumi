@@ -5286,6 +5286,11 @@ class TranscribeGUI(QWidget):
         self._colab_clipboard_pending = False
         self._last_auto_colab_url = ""
         QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed_for_colab)
+        self._eta_colab_chunk_started_at = None
+        self._eta_colab_chunk_average_seconds = None
+        self._eta_colab_total_chunks = 0
+        self._eta_colab_done_chunks = 0
+        self._eta_current_mode = "local"
 
 
 
@@ -23301,42 +23306,42 @@ class TranscribeGUI(QWidget):
 
 
 
-    def refresh_eta_tick(self):
-
-
-
-
-
-        if self.process is None or self.process.state() == QProcess.NotRunning:
-
-
-
-
-
-            return
-
-
-
-
-
-        if self.current_file_name:
-
-
-
-
-
-            self.update_current_file_progress(self.last_current_percent, force=True)
-
-
-
-
-
+    def _update_realtime_eta_display(self):
+        est = 0.0
+        if getattr(self, "_eta_current_mode", "local") == "colab":
+            if getattr(self, "_eta_colab_total_chunks", 0) > 0 and getattr(self, "_eta_colab_chunk_started_at", None):
+                avg_chunk = getattr(self, "_eta_colab_chunk_average_seconds", None) or 30.0
+                elapsed_chunk = max(0.0, time.time() - self._eta_colab_chunk_started_at)
+                remain_chunks = max(0, self._eta_colab_total_chunks - self._eta_colab_done_chunks - 1)
+                est_current_chunk = max(0.0, avg_chunk - elapsed_chunk)
+                est = est_current_chunk + (remain_chunks * avg_chunk)
+            else:
+                self._set_eta_value(self.label_current_eta, "계산 중...")
+                return
         else:
+            if getattr(self, "current_file_started_at", None) and getattr(self, "run_current_audio_seconds", 0.0) > 0:
+                elapsed = max(0.0, time.time() - self.current_file_started_at)
+                ratio = float(self.duration_eta_ratio) if self.duration_eta_ratio else DEFAULT_WHISPER_TIME_RATIO
+                ratio = max(0.05, min(5.0, ratio))
+                expected_total = self.run_current_audio_seconds * ratio
+                est = max(0.0, expected_total - elapsed)
+            else:
+                self._set_eta_value(self.label_current_eta, "계산 중...")
+                return
 
+        self.current_eta_seconds = est if self.current_eta_seconds is None else self.current_eta_seconds * 0.7 + est * 0.3
+        if self.current_eta_seconds <= 0.5:
+            self._set_eta_value(self.label_current_eta, "곧 완료 예상")
+        else:
+            self._set_eta_value(self.label_current_eta, f"{format_seconds(self.current_eta_seconds)}")
+        self.update_total_eta_label()
 
-
-
-
+    def refresh_eta_tick(self):
+        if not self._is_transcribe_running():
+            return
+        if self.current_file_name:
+            self._update_realtime_eta_display()
+        else:
             self.update_total_eta_label()
 
 
@@ -24097,11 +24102,30 @@ class TranscribeGUI(QWidget):
                 if name:
                     self._set_current_file_text(name)
                 if total_chunks > 0:
+                    if getattr(self, "_eta_colab_chunk_started_at", None):
+                        d = time.time() - self._eta_colab_chunk_started_at
+                        if d > 0:
+                            if getattr(self, "_eta_colab_chunk_average_seconds", None) is None:
+                                self._eta_colab_chunk_average_seconds = d
+                            else:
+                                self._eta_colab_chunk_average_seconds = self._eta_colab_chunk_average_seconds * 0.7 + d * 0.3
+                        self._eta_colab_chunk_started_at = None
+                    self._eta_colab_done_chunks = done_chunks
+                    self._eta_colab_total_chunks = total_chunks
                     percent = max(0, min(100, int(round(done_chunks * 100.0 / total_chunks))))
                     self.update_current_file_progress(percent, force=True)
                     self.update_total_eta_label()
 
+        elif evt == "COLAB_CHUNK_START":
+            chunk_idx = int(payload[1]) if len(payload) > 1 and payload[1].isdigit() else 0
+            chunk_total = int(payload[2]) if len(payload) > 2 and payload[2].isdigit() else 0
+            self._eta_colab_chunk_started_at = time.time()
+            self._eta_colab_total_chunks = chunk_total
+            self._eta_colab_done_chunks = chunk_idx - 1
+            self._eta_current_mode = "colab"
+
         elif evt == "START_FILE":
+            self._eta_current_mode = "local"
             name = payload[0] if payload else self.current_file_name
             if name:
                 self._set_current_file_text(name)
