@@ -48,6 +48,19 @@
 
 ---
 
+## Colab Large-v3 timeout resilience
+
+- [x] Colab chunk 기본 단위가 600초에서 300초로 변경되었는지 확인
+- [x] HTTP 502/503/504/524 transient 오류가 chunk 단위 retry 대상인지 확인
+- [x] timeout 계열 예외가 chunk 단위 retry 대상인지 확인
+- [x] HTTP 404 등 non-retry 오류는 재시도하지 않는지 mock으로 확인
+- [x] HTTP 524 1회 발생 후 재시도 성공 mock 테스트 확인
+- [x] HTTP 524 반복 발생 시 최대 재시도 후 실패 mock 테스트 확인
+- [x] 최종 실패 로그에 파일명, chunk 번호, 시도 횟수, 예외 타입/메시지가 포함되는지 확인
+- [ ] 실제 Colab 장시간 전사 재검증
+
+---
+
 ## 4. 실제 장시간 Colab 전사 검증 계획
 
 - 대상: 6과목 각 1개 이상
