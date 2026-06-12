@@ -6214,21 +6214,25 @@ class TranscribeGUI(QWidget):
 
         classify_box.addSpacing(2)
 
-        lbl_course = QLabel("과정명")
-        lbl_course.setStyleSheet("font-weight: 500; font-size: 12px;")
+        lbl_course = QLabel("과정명:")
+        lbl_course.setFont(font_label)
+        lbl_course.setStyleSheet("color: #334155; margin-left: 10px;")
         classify_box.addWidget(lbl_course)
         self.combo_transcribe_course = QComboBox()
-        self.combo_transcribe_course.addItems(["", "개념완성", "기본이론", "기초이론"])
+        self.combo_transcribe_course.setObjectName("CourseCombo")
+        self.combo_transcribe_course.addItems(["개념완성", "기본이론", "기초이론"])
         self.combo_transcribe_course.setFixedHeight(34)
         classify_box.addWidget(self.combo_transcribe_course)
 
         classify_box.addSpacing(4)
 
-        lbl_subject = QLabel("과목명")
-        lbl_subject.setStyleSheet("font-weight: 500; font-size: 12px;")
+        lbl_subject = QLabel("과목명:")
+        lbl_subject.setFont(font_label)
+        lbl_subject.setStyleSheet("color: #334155; margin-left: 10px;")
         classify_box.addWidget(lbl_subject)
         self.combo_transcribe_subject = QComboBox()
-        self.combo_transcribe_subject.addItems(["", "부동산학개론", "민법", "공인중개사법", "부동산공법", "부동산공시법", "부동산세법"])
+        self.combo_transcribe_subject.setObjectName("SubjectCombo")
+        self.combo_transcribe_subject.addItems(["부동산학개론", "민법", "공인중개사법", "부동산공법", "부동산공시법", "부동산세법"])
         self.combo_transcribe_subject.setFixedHeight(34)
         classify_box.addWidget(self.combo_transcribe_subject)
 
@@ -11066,6 +11070,36 @@ class TranscribeGUI(QWidget):
             QComboBox#TranscriptionEngineCombo QAbstractItemView::item:selected:hover {
                 background: #cbd5e1;
                 color: #0f172a;
+            }
+
+            QComboBox#CourseCombo QAbstractItemView,
+            QComboBox#SubjectCombo QAbstractItemView {
+                border: 1px solid #e2e8f0;
+                background: #ffffff;
+                outline: 0;
+                padding: 4px 0;
+                selection-background-color: #f1f5f9;
+                selection-color: #0f172a;
+            }
+            QComboBox#CourseCombo QAbstractItemView::item,
+            QComboBox#SubjectCombo QAbstractItemView::item {
+                min-height: 32px;
+                padding: 6px 12px;
+                border: none;
+                color: #1e293b;
+                background: #ffffff;
+            }
+            QComboBox#CourseCombo QAbstractItemView::item:hover,
+            QComboBox#SubjectCombo QAbstractItemView::item:hover {
+                background: #f8fafc;
+                color: #0f172a;
+                border: none;
+            }
+            QComboBox#CourseCombo QAbstractItemView::item:selected,
+            QComboBox#SubjectCombo QAbstractItemView::item:selected {
+                background: #f1f5f9;
+                color: #0f172a;
+                border: none;
             }
 
             QComboBox#TranscriptionEngineCombo:disabled,
