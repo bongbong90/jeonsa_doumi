@@ -3,6 +3,15 @@
 작성일: 2026-06-07  
 대상: 최근 Google Drive 업로드, 파일명 정규화, Colab Large-v3 품질 보강, UI/UX, 패키징 작업 묶음
 
+## 최종 UX 및 ETA 개선
+
+- 과정명/과목명 콤보박스 드롭다운 UI를 정리하고 빈 항목이 표시되지 않도록 개선했다.
+- Colab Large-v3 선택 상태에서 `trycloudflare.com` URL을 클립보드에서 자동 감지해 URL 입력 및 연결 확인까지 자동으로 진행하도록 개선했다.
+- 기존 "클립보드에서 가져오기" 버튼은 유지하여 수동 fallback 흐름을 보존했다.
+- CURRENT ETA가 전사 중 멈춰 보이지 않도록 1초 단위 추정 갱신을 추가했다.
+- Colab 전사는 chunk 시작/완료 이벤트 기반으로 ETA를 추정하고, 로컬 전사는 음원 길이와 평균 처리속도 기반으로 ETA를 추정한다.
+- Whisper 내부 progress hook, tqdm/stderr 파싱, Colab notebook 수정 없이 GUI 표시 로직 중심으로 개선했다.
+
 ## 전체 요약
 
 이번 작업 묶음은 전사 시작 전 파일 분류와 파일명 정규화, 로컬/Colab 전사 품질 보정, Google Drive 자동 업로드, 배포본 포함 리소스까지 하나의 사용 흐름으로 맞추는 데 초점을 두었다.

@@ -48,6 +48,18 @@
 
 ---
 
+## 3.5. 최근 UX 및 ETA 개선
+
+- [x] 과정명/과목명 콤보박스 드롭다운 UI 정리 및 빈 항목 제거
+- [x] Colab URL 클립보드 자동 감지 기능 구현
+  - Colab Large-v3 선택 상태에서 trycloudflare URL 자동 감지 및 기존 연결 확인 로직 재사용
+  - 기존 수동 “클립보드에서 가져오기” 버튼 유지
+- [x] CURRENT ETA 실시간 추정 갱신 개선
+  - Colab chunk 기반 ETA 추정 및 로컬 음원 길이/처리속도 기반 ETA 추정
+  - Whisper 내부 진행률 파싱 없이 GUI 표시 로직 중심으로 구현
+
+---
+
 ## Colab Large-v3 timeout resilience
 
 - [x] Colab chunk 기본 단위가 600초에서 300초로 변경되었는지 확인
