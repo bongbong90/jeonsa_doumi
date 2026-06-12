@@ -1,6 +1,7 @@
 # 최근 개발 히스토리
 
-작성일: 2026-06-07  
+최초 작성일: 2026-06-07  
+최종 업데이트: 2026-06-12  
 대상: 최근 Google Drive 업로드, 파일명 정규화, Colab Large-v3 품질 보강, UI/UX, 패키징 작업 묶음
 
 ## 최종 UX 및 ETA 개선
@@ -127,10 +128,13 @@
 - 인증 파일 손상 방지 및 검증 로직 확인
 - 이 항목은 Drive 업로드 흐름 검증을 기준으로 정리하며, 이번 문서화 작업 중 OAuth 인증이나 추가 업로드 테스트는 수행하지 않았다.
 
-### Colab 연결
-- Mock Colab 서버로 `/health` 및 `/transcribe` 흐름 확인
-- PySide6 검증으로 URL 추출, 연결 확인, 정상/실패 안내 흐름 확인
-- 실제 Google Colab 런타임에서 장시간 전사를 새로 수행한 검증은 아니다.
+### Colab 연결 및 장시간 전사
+- Mock Colab 서버로 `/health` 및 `/transcribe` 흐름을 확인했다.
+- PySide6 검증으로 URL 추출, 연결 확인, 정상/실패 안내 흐름을 확인했다.
+- 실제 Google Colab 런타임에서 6개 과목 기준 장시간 전사 검증을 완료했다.
+- 300초 chunk 분할 및 HTTP 524 retry 안정화 이후, 장시간 전사 흐름이 정상 완료됨을 확인했다.
+- 전 과목에서 TXT/JSON/SRT 생성, FILE_DONE/ALL_DONE 이벤트, prompt/corrections 적용 로그를 확인했다.
+- 검증은 Google Drive 자동 업로드 OFF 상태에서 수행했으며, DRIVE_UPLOAD 이벤트 미발생을 확인했다.
 
 ### UI/알림
 - 알림창 줄바꿈 표시 버그 수정 확인
@@ -161,21 +165,17 @@
 
 ## 남은 개선 후보
 
-1. 실제 Google Colab 런타임에서 장시간 전사 검증
-2. Colab notebook UX 추가 개선
-3. Google Drive 업로드 후 로컬 파일 휴지통 이동 옵션 설계
-4. 전체 과목별 prompt/corrections 사전 품질 보강
-5. 배포본 실사용 시나리오 테스트
-6. 릴리즈 노트 작성
-7. 버전 태그 생성 검토
+1. 배포본 exe 실사용 시나리오 테스트
+2. 최종 PyInstaller 빌드 산출물 검증
+3. 릴리즈 노트 작성
+4. 버전 태그 생성 검토
+5. Google Drive 업로드 후 로컬 파일 휴지통 이동 옵션 설계
+6. Colab notebook UX 추가 개선
 
 ## 현재 안전 상태
 
-- 원격 `main`에는 최근 커밋 push가 완료된 상태로 정리한다.
-- 로컬 기준 `main...origin/main`은 ahead/behind 표시 없이 동기화되어 있다.
-- 로컬 worktree에는 문서화 작업 전부터 `colab_transcribe.ipynb` 수정분과 `?? pyrightconfig.json`이 남아 있었다.
-- 이번 문서화 작업에서는 코드 파일, notebook, credentials/token 파일, build/dist 산출물을 수정하지 않는다.
 - `pyrightconfig.json`은 untracked 상태로 유지하며 스테이징하지 않는다.
-- credentials/token 파일은 저장소/패키징에 포함되지 않는다.
+- credentials/token 파일은 저장소/패키징에 포함하지 않는다.
 - build/dist 산출물은 커밋 대상이 아니다.
 - Google Drive 업로드 완료 후 로컬 파일 자동삭제 기능은 미구현/보류 상태다.
+- 배포본 exe 실사용 시나리오 테스트, 최종 릴리즈 노트, 버전 태그 생성은 아직 남은 단계다.
