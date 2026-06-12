@@ -49,6 +49,7 @@ import statistics
 import subprocess
 import tempfile
 import traceback
+import socket
 
 try:
     import filename_normalizer as filename_norm
@@ -423,7 +424,9 @@ SESSION_STATE_FILENAME = "transcribe_session_state.json"
 
 ETA_EMPTY_TEXT = "-"
 DEFAULT_WHISPER_TIME_RATIO = 0.18
-COLAB_CHUNK_SECONDS = 600
+COLAB_CHUNK_SECONDS = 300
+COLAB_CHUNK_MAX_RETRIES = 2
+COLAB_CHUNK_RETRY_BASE_DELAY_SECONDS = 10
 COLAB_PROGRESS_FILENAME = "progress.json"
 
 
@@ -17483,6 +17486,24 @@ class TranscribeGUI(QWidget):
 
         return chunk_infos, chunk_dir
 
+    def _is_colab_retryable_error(self, exc: Exception) -> bool:
+        if isinstance(exc, urllib_error.HTTPError):
+            code = getattr(exc, "code", 0)
+            if code in (502, 503, 504, 524):
+                return True
+            return False
+        if isinstance(exc, TimeoutError):
+            return True
+        if isinstance(exc, socket.timeout):
+            return True
+        if isinstance(exc, urllib_error.URLError):
+            reason = getattr(exc, "reason", None)
+            if isinstance(reason, (TimeoutError, socket.timeout)):
+                return True
+            if "timeout" in str(reason).lower():
+                return True
+        return False
+
     def _post_colab_transcribe(
         self, transcribe_url: str, file_path: str, initial_prompt: str = "", subject: str = ""
     ) -> dict:
@@ -17696,12 +17717,55 @@ class TranscribeGUI(QWidget):
                         chunk_offset = self._colab_safe_seconds(chunk.get("offset", 0.0), default=0.0)
                         stage = f"조각 전송 {chunk_idx}/{chunk_total}"
 
-                        chunk_result = self._post_colab_transcribe(
-                            transcribe_url,
-                            chunk_path,
-                            initial_prompt=quality_prompt_text,
-                            subject=quality_subject,
-                        )
+                        chunk_result = None
+                        retries = 0
+                        last_err = None
+                        
+                        while retries <= COLAB_CHUNK_MAX_RETRIES:
+                            try:
+                                if retries > 0:
+                                    _emit_log(f"[GUI] Colab 조각 재시도 중: {event_name} ({chunk_idx}/{chunk_total}) / {retries}/{COLAB_CHUNK_MAX_RETRIES}\\n")
+                                
+                                chunk_result = self._post_colab_transcribe(
+                                    transcribe_url,
+                                    chunk_path,
+                                    initial_prompt=quality_prompt_text,
+                                    subject=quality_subject,
+                                )
+                                
+                                if retries > 0:
+                                    _emit_log(f"[GUI] Colab 조각 재시도 성공: {event_name} ({chunk_idx}/{chunk_total})\\n")
+                                break
+                            except Exception as exc:
+                                last_err = exc
+                                if not self._is_colab_retryable_error(exc) or retries >= COLAB_CHUNK_MAX_RETRIES:
+                                    if retries >= COLAB_CHUNK_MAX_RETRIES and retries > 0:
+                                        _emit_log(f"[GUI] Colab 조각 재시도 실패: {event_name} ({chunk_idx}/{chunk_total}) / {COLAB_CHUNK_MAX_RETRIES}회 재시도 후 실패\\n")
+                                    stage = f"조각 전송 {chunk_idx}/{chunk_total}, 시도={retries+1}/{COLAB_CHUNK_MAX_RETRIES+1}"
+                                    raise
+                                
+                                retries += 1
+                                delay = COLAB_CHUNK_RETRY_BASE_DELAY_SECONDS * retries
+                                err_msg = str(getattr(exc, 'reason', exc) or exc).strip()
+                                if isinstance(exc, urllib_error.HTTPError):
+                                    err_msg = f"HTTP {getattr(exc, 'code', '?')} {str(getattr(exc, 'reason', '') or '').strip()}".strip()
+                                _emit_log(f"[GUI] Colab 조각 재시도 예정: {event_name} ({chunk_idx}/{chunk_total}) / {err_msg} / {delay}초 후 재시도 {retries}/{COLAB_CHUNK_MAX_RETRIES}\\n")
+                                
+                                wait_elapsed = 0
+                                while wait_elapsed < delay:
+                                    if self._colab_stop_after_current:
+                                        break
+                                    time.sleep(1)
+                                    wait_elapsed += 1
+                                    
+                                if self._colab_stop_after_current:
+                                    break
+                                    
+                        if self._colab_stop_after_current and chunk_result is None:
+                            _emit_log(f"[GUI] 중지 요청 감지: 재시도 대기 중 중단 ({event_name}, {chunk_idx}/{chunk_total})\\n")
+                            stopped = True
+                            break
+
                         _emit_comm_time()
 
                         if not merged_language:
