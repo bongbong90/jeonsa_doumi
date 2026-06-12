@@ -5283,6 +5283,9 @@ class TranscribeGUI(QWidget):
         self._colab_resume_completed_keys: set[str] = set()
         self._colab_resume_session_id = ""
         self._colab_resume_progress_path_key = ""
+        self._colab_clipboard_pending = False
+        self._last_auto_colab_url = ""
+        QApplication.clipboard().dataChanged.connect(self._on_clipboard_changed_for_colab)
 
 
 
@@ -17991,13 +17994,48 @@ class TranscribeGUI(QWidget):
             self.label_colab_last_comm.setText("상태: 연결 대기")
         self.save_ui_preferences()
 
+    def _extract_colab_base_url(self, text: str) -> str:
+        match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", text)
+        if match:
+            return match.group(0)
+        return ""
+
+    def _on_clipboard_changed_for_colab(self):
+        if self._colab_clipboard_pending:
+            return
+        self._colab_clipboard_pending = True
+        QTimer.singleShot(250, self._handle_colab_clipboard_url)
+
+    def _handle_colab_clipboard_url(self):
+        self._colab_clipboard_pending = False
+        if self.transcription_engine != "colab":
+            return
+        if self._is_transcribe_running():
+            return
+            
+        try:
+            clipboard = QApplication.clipboard()
+            text = clipboard.text() or ""
+            url = self._extract_colab_base_url(text)
+            if not url:
+                return
+
+            if url == self._last_auto_colab_url and self._colab_check_connected:
+                return
+                
+            self._last_auto_colab_url = url
+            self.input_colab_url.setText(url)
+            self.append_log_text("[GUI] Colab URL을 클립보드에서 자동 감지했습니다. 연결 확인 중...\n")
+            self._handle_colab_connection_check()
+        except Exception as e:
+            self.append_log_text(f"[GUI] 클립보드 URL 자동 감지 실패: {e}\n")
+
     def _handle_paste_colab_url_from_clipboard(self):
         try:
             clipboard = QApplication.clipboard()
             text = clipboard.text() or ""
-            match = re.search(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com", text)
-            if match:
-                url = match.group(0)
+            url = self._extract_colab_base_url(text)
+            if url:
                 self.input_colab_url.setText(url)
                 self._handle_colab_connection_check()
             else:
