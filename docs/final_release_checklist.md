@@ -14,7 +14,8 @@
 - 전체 과목 prompt/corrections 품질 보강 완료
 - 과정명/과목명 콤보박스 UI, Colab URL 자동 감지, CURRENT ETA 실시간 추정 개선 완료
 - 최종 PyInstaller 빌드 완료
-- 배포본 exe 기본 실행 검증 완료
+- 배포본 exe 최초 실행 중 발견된 `font_label` NameError는 수정 및 재빌드 검증 완료
+- 배포본 exe 기본 실행 검증은 통과
 - 배포본 exe 기준 전체 실사용 시나리오 테스트는 아직 남아 있음
 - 현재 상태는 **"빌드 완료 / 배포본 exe 실사용 시나리오 테스트 전"**으로 표현하는 것이 정확함
 
@@ -35,9 +36,10 @@
 | Colab URL 클립보드 자동 감지 | 완료 | trycloudflare URL 감지 완료 |
 | CURRENT ETA 실시간 추정 갱신 | 완료 | 추정 시간 개선 완료 |
 | 최종 PyInstaller 빌드 | 완료 | 빌드 성공 |
+| 배포본 exe 시작 실패 수정 및 재빌드 검증 | 완료 | font_label NameError 수정, 재빌드 exe 실행/응답 확인 |
 | 배포본 exe 기본 실행 검증 | 완료 | exe 프로세스 실행 확인 |
 | credentials/token 배포본 산출물 파일명 검색 | 완료 | dist 내 파일명 없음 확인 |
-| 배포본 exe 실사용 시나리오 테스트 | 미완료 | exe 기준 종합 시나리오 미실행 |
+| 배포본 exe 실사용 시나리오 테스트 | 미완료 | GUI 상세 클릭/파일 선택/실제 전사 시나리오 사용자 수동 검증 필요 |
 | 릴리즈 노트 작성 | 미완료 | 초안 없음 |
 | 버전 태그 생성 | 미완료 | 검토 전 |
 
@@ -53,6 +55,9 @@
 - [x] 실제 장시간 Colab 전사 검증 완료 (과목별 1개 이상)
 - [x] 최종 PyInstaller 빌드 완료
 - [x] 배포본 exe 기본 실행 검증 완료
+  - 최초 exe 실행 중 `font_label` NameError가 발견되어 `dc84e21`에서 수정
+  - 재빌드 후 `dist\전사도우미\전사도우미.exe` 실행 및 응답 상태 확인
+  - Unhandled exception 재발 없음
 - [x] credentials/token 파일이 배포본 산출물에 포함되지 않음을 파일명 기준으로 확인
 - [ ] 배포본 exe 기준 실사용 시나리오 통과
 - [ ] 릴리즈 노트 작성 완료
@@ -92,6 +97,16 @@
 ---
 
 ## 최종 PyInstaller 빌드 및 exe 기본 실행 검증 결과
+
+### 배포본 exe 시작 실패 수정 및 재검증
+
+- 최초 배포본 exe 실행 중 `build_ui()` 단계에서 `NameError: name 'font_label' is not defined` 오류가 발생했다.
+- 원인은 과정명/과목명 라벨에서 정의되지 않은 `font_label` 변수를 참조한 것이었다.
+- `dc84e21 Fix startup font label reference` 커밋에서 `setFont(font_label)` 참조를 제거하고 stylesheet 기반 라벨 스타일을 유지하도록 수정했다.
+- 수정 후 `python -m py_compile gui_main.py`, `python -c "import gui_main; print('gui import ok')"` 검증을 통과했다.
+- `python gui_main.py` 소스 UI 실행 시 즉시 예외 종료가 발생하지 않음을 확인했다.
+- PyInstaller 재빌드 후 `dist\전사도우미\전사도우미.exe` 실행 결과 `responding=True`, 창 제목 `전사도우미`로 확인되었다.
+- Unhandled exception 창은 재발하지 않았다.
 
 - 빌드 명령: `python -m PyInstaller --clean --noconfirm 전사도우미.spec`
 - 빌드 결과: 성공
