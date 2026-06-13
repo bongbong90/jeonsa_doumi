@@ -17341,6 +17341,118 @@ class TranscribeGUI(QWidget):
 
         return txt_path, json_path, srt_path
 
+    def _upload_transcription_outputs_to_drive(
+        self,
+        upload_drive: bool,
+        mp3_path: str,
+        txt_path: str,
+        json_path: str,
+        srt_path: str,
+        display_name: str = "",
+        emit_event=None,
+        emit_log=None,
+    ):
+        def _event(evt: str, *payload):
+            if callable(emit_event):
+                try:
+                    emit_event(evt, *payload)
+                except Exception:
+                    pass
+
+        def _log(text: str):
+            if callable(emit_log):
+                try:
+                    emit_log(text)
+                except Exception:
+                    pass
+
+        name = str(display_name or os.path.basename(mp3_path) or "unknown").strip() or "unknown"
+        if not upload_drive:
+            _event("DRIVE_UPLOAD_SKIPPED", name, "Google Drive 자동 업로드 OFF")
+            return
+
+        targets = [
+            ("MP3", mp3_path),
+            ("TXT", txt_path),
+            ("JSON", json_path),
+            ("SRT", srt_path),
+        ]
+
+        _event("DRIVE_UPLOAD_START", name)
+        _event("FILE_PROGRESS", name, 97, "Google Drive 업로드 중")
+
+        try:
+            import google_drive_uploader
+        except ImportError as exc:
+            _event("DRIVE_UPLOAD_FAILED", name, f"모듈 없음: {type(exc).__name__}")
+            _log("[GUI] 전사 결과 파일은 로컬에 저장되어 있습니다.\n")
+            return
+
+        missing = []
+        resolved_targets = []
+        for label, path in targets:
+            file_path = Path(str(path or ""))
+            if not path or not file_path.exists():
+                missing.append(label)
+                continue
+            resolved_targets.append((label, file_path))
+
+        if missing:
+            _event("DRIVE_UPLOAD_FAILED", name, f"업로드 대상 파일 없음: {', '.join(missing)}")
+            _log("[GUI] 전사 결과 파일은 로컬에 저장되어 있습니다.\n")
+            return
+
+        try:
+            classification = google_drive_uploader.validate_upload_classification(mp3_path)
+        except Exception as exc:
+            _event("DRIVE_UPLOAD_FAILED", name, f"{type(exc).__name__}: {exc}")
+            _log("[GUI] 전사 결과 파일은 로컬에 저장되어 있습니다.\n")
+            return
+
+        if not classification.get("ok"):
+            reasons = ", ".join(classification.get("reasons", []))
+            _event("DRIVE_UPLOAD_BLOCKED", name, reasons)
+            return
+
+        try:
+            service = google_drive_uploader.build_drive_service()
+            parent_id = None
+            for folder_name in classification.get("drive_path", []):
+                parent_id = google_drive_uploader.get_or_create_folder(service, folder_name, parent_id)
+        except Exception as exc:
+            _event("DRIVE_UPLOAD_FAILED", name, f"{type(exc).__name__}: {exc}")
+            _log("[GUI] 전사 결과 파일은 로컬에 저장되어 있습니다.\n")
+            return
+
+        uploaded_count = 0
+        errors = []
+        for label, file_path in resolved_targets:
+            ext = file_path.suffix.lower().lstrip(".") or label.lower()
+            _event("DRIVE_UPLOAD_FILE_START", file_path.name, ext)
+            try:
+                result = google_drive_uploader.upload_file(service, file_path, parent_id)
+            except Exception as exc:
+                message = f"{file_path.name}: {type(exc).__name__}: {exc}"
+                errors.append(message)
+                _event("DRIVE_UPLOAD_FILE_FAILED", file_path.name, ext, f"{type(exc).__name__}: {exc}")
+                continue
+
+            status = str(result.get("status", "") or "")
+            if status in ("uploaded", "updated"):
+                uploaded_count += 1
+                _event("DRIVE_UPLOAD_FILE_DONE", file_path.name, ext)
+            else:
+                error = str(result.get("error", "") or "unknown error")
+                errors.append(f"{file_path.name}: {error}")
+                _event("DRIVE_UPLOAD_FILE_FAILED", file_path.name, ext, error)
+
+        if errors:
+            _event("DRIVE_UPLOAD_FAILED", name, "; ".join(errors))
+            _log("[GUI] 전사 결과 파일은 로컬에 저장되어 있습니다.\n")
+            return
+
+        _event("DRIVE_UPLOAD_DONE", name, uploaded_count)
+
     def _load_colab_quality_prompt(self, subject: str, log_func=None) -> str:
         def _log(text: str):
             if callable(log_func):
@@ -17652,13 +17764,14 @@ class TranscribeGUI(QWidget):
         self._colab_stop_after_current = False
         self._colab_run_request_id += 1
         request_id = self._colab_run_request_id
+        upload_drive = bool(self.upload_drive_checkbox.isChecked())
         self._set_status_text(self._run_mode_in_progress_text())
         self._set_current_file_text("없음")
         self.append_log_text(f"[GUI] Colab 전사 시작: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
         worker = threading.Thread(
             target=self._run_colab_transcribe_worker,
-            args=(request_id, transcribe_url, run_targets, progress_state, selected_subject),
+            args=(request_id, transcribe_url, run_targets, progress_state, selected_subject, upload_drive),
             daemon=True,
         )
         worker.start()
@@ -17671,6 +17784,7 @@ class TranscribeGUI(QWidget):
         run_targets: list[dict],
         progress_state: dict | None = None,
         subject: str = "",
+        upload_drive: bool = False,
     ):
         def _emit_comm_time():
             now_str = datetime.datetime.now().strftime("%H:%M:%S")
@@ -17873,6 +17987,17 @@ class TranscribeGUI(QWidget):
                     _emit_log(f"[GUI] 저장 경로: TXT={txt_path}\n")
                     _emit_log(f"[GUI] 저장 경로: JSON={json_path}\n")
                     _emit_log(f"[GUI] 저장 경로: SRT={srt_path}\n")
+                    stage = "Google Drive 업로드"
+                    self._upload_transcription_outputs_to_drive(
+                        upload_drive,
+                        runtime_mp3,
+                        txt_path,
+                        json_path,
+                        srt_path,
+                        display_name=event_name,
+                        emit_event=_emit_event,
+                        emit_log=_emit_log,
+                    )
                     _emit_event("FILE_DONE", event_name)
                     _emit_log(f"[GUI] Colab 전사 완료: {event_name}\n")
                 except urllib_error.HTTPError as exc:
@@ -24132,21 +24257,46 @@ class TranscribeGUI(QWidget):
         elif evt == "DRIVE_UPLOAD_START":
             name = payload[0] if payload else "unknown"
             self.append_log_text(f"[GUI] Google Drive 업로드 시작: {name}\n")
+
+        elif evt == "DRIVE_UPLOAD_FILE_START":
+            name = payload[0] if payload else "unknown"
+            ext = payload[1] if len(payload) > 1 else ""
+            suffix = f" / {ext}" if ext else ""
+            self.append_log_text(f"[GUI] Google Drive 업로드 파일 시작: {name}{suffix}\n")
             
         elif evt == "DRIVE_UPLOAD_DONE":
             name = payload[0] if payload else "unknown"
             count = payload[1] if len(payload) > 1 else "알 수 없음"
             self.append_log_text(f"[GUI] Google Drive 업로드 완료: {name} ({count}개 파일)\n")
+
+        elif evt == "DRIVE_UPLOAD_FILE_DONE":
+            name = payload[0] if payload else "unknown"
+            ext = payload[1] if len(payload) > 1 else ""
+            suffix = f" / {ext}" if ext else ""
+            self.append_log_text(f"[GUI] Google Drive 업로드 파일 완료: {name}{suffix}\n")
             
         elif evt == "DRIVE_UPLOAD_BLOCKED":
             name = payload[0] if payload else "unknown"
             msg = payload[1] if len(payload) > 1 else ""
             self.append_log_text(f"[GUI] Google Drive 업로드 차단: {name} - {msg}\n")
             
-        elif evt == "DRIVE_UPLOAD_FAIL":
+        elif evt == "DRIVE_UPLOAD_FILE_FAILED":
+            name = payload[0] if payload else "unknown"
+            ext = payload[1] if len(payload) > 1 else ""
+            msg = payload[2] if len(payload) > 2 else ""
+            suffix = f" / {ext}" if ext else ""
+            detail = f" - {msg}" if msg else ""
+            self.append_log_text(f"[GUI] Google Drive 업로드 파일 실패: {name}{suffix}{detail}\n")
+
+        elif evt in ("DRIVE_UPLOAD_FAIL", "DRIVE_UPLOAD_FAILED"):
             name = payload[0] if payload else "unknown"
             msg = payload[1] if len(payload) > 1 else ""
             self.append_log_text(f"[GUI] Google Drive 업로드 실패: {name} - {msg}\n")
+
+        elif evt == "DRIVE_UPLOAD_SKIPPED":
+            name = payload[0] if payload else "unknown"
+            msg = payload[1] if len(payload) > 1 else "Google Drive 자동 업로드 OFF"
+            self.append_log_text(f"[GUI] Google Drive 업로드 건너뜀: {name} - {msg}\n")
 
 
 
@@ -24921,11 +25071,6 @@ class TranscribeGUI(QWidget):
         self.set_transcribe_buttons_enabled(False)
         self.update_session_label()
 
-        if engine == "colab":
-            if not self._start_colab_transcribe_run(runtime_folder, selected_subject):
-                return
-            return
-
         if self.upload_drive_checkbox.isChecked():
             if not self._has_google_drive_auth_files():
                 self._show_google_drive_auth_warning()
@@ -24933,6 +25078,11 @@ class TranscribeGUI(QWidget):
                 self._sync_selected_runtime_outputs()
                 self.selected_run_items = []
                 return
+
+        if engine == "colab":
+            if not self._start_colab_transcribe_run(runtime_folder, selected_subject):
+                return
+            return
 
         self.process = QProcess(self)
         self.process.setProgram("python" if getattr(sys, "frozen", False) else sys.executable)
