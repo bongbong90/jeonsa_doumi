@@ -1,3 +1,26 @@
+## v0.9.0-rc2 - 2026-06-14
+
+### Fixed
+
+- Fixed the Colab transcription flow so Google Drive upload processing runs after TXT/JSON/SRT output files are saved and before file completion is reported.
+- Improved Google Drive upload logging in the GUI execution log.
+- Google Drive upload start, per-file upload start/done, upload done, failed, skipped states are now surfaced to the GUI log.
+- Resolved the issue where upload logs were filtered out because `[GUI]`-prefixed messages were ignored by the GUI log append path.
+
+### Verified
+
+- Verified Colab Large-v3 transcription with Google Drive auto upload ON using actual lecture MP3 files.
+- Confirmed MP3/TXT/JSON/SRT upload for each processed file.
+- Confirmed transcription completion logs appear after Google Drive upload completion.
+- Confirmed credentials/token contents are not printed in logs.
+- Confirmed no Google Drive delete logic or local auto-delete logic was added.
+
+### Notes
+
+- v0.9.0-rc2 requires a new PyInstaller build because `gui_main.py` changed after v0.9.0-rc1.
+
+---
+
 # 전사도우미 v0.9.0 Release Notes
 
 작성일: 2026-06-13  
