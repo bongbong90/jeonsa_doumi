@@ -24256,29 +24256,29 @@ class TranscribeGUI(QWidget):
 
         elif evt == "DRIVE_UPLOAD_START":
             name = payload[0] if payload else "unknown"
-            self.append_log_text(f"[GUI] Google Drive 업로드 시작: {name}\n")
+            self.append_log_text(f"Google Drive 업로드 시작: {name}\n", force=True)
 
         elif evt == "DRIVE_UPLOAD_FILE_START":
             name = payload[0] if payload else "unknown"
             ext = payload[1] if len(payload) > 1 else ""
             suffix = f" / {ext}" if ext else ""
-            self.append_log_text(f"[GUI] Google Drive 업로드 파일 시작: {name}{suffix}\n")
+            self.append_log_text(f"Google Drive 업로드 파일 시작: {name}{suffix}\n", force=True)
             
         elif evt == "DRIVE_UPLOAD_DONE":
             name = payload[0] if payload else "unknown"
             count = payload[1] if len(payload) > 1 else "알 수 없음"
-            self.append_log_text(f"[GUI] Google Drive 업로드 완료: {name} ({count}개 파일)\n")
+            self.append_log_text(f"Google Drive 업로드 완료: {name} ({count}개 파일)\n", force=True)
 
         elif evt == "DRIVE_UPLOAD_FILE_DONE":
             name = payload[0] if payload else "unknown"
             ext = payload[1] if len(payload) > 1 else ""
             suffix = f" / {ext}" if ext else ""
-            self.append_log_text(f"[GUI] Google Drive 업로드 파일 완료: {name}{suffix}\n")
+            self.append_log_text(f"Google Drive 업로드 파일 완료: {name}{suffix}\n", force=True)
             
         elif evt == "DRIVE_UPLOAD_BLOCKED":
             name = payload[0] if payload else "unknown"
             msg = payload[1] if len(payload) > 1 else ""
-            self.append_log_text(f"[GUI] Google Drive 업로드 차단: {name} - {msg}\n")
+            self.append_log_text(f"Google Drive 업로드 차단: {name} - {msg}\n", force=True)
             
         elif evt == "DRIVE_UPLOAD_FILE_FAILED":
             name = payload[0] if payload else "unknown"
@@ -24286,17 +24286,18 @@ class TranscribeGUI(QWidget):
             msg = payload[2] if len(payload) > 2 else ""
             suffix = f" / {ext}" if ext else ""
             detail = f" - {msg}" if msg else ""
-            self.append_log_text(f"[GUI] Google Drive 업로드 파일 실패: {name}{suffix}{detail}\n")
+            self.append_log_text(f"Google Drive 업로드 파일 실패: {name}{suffix}{detail}\n", force=True)
 
         elif evt in ("DRIVE_UPLOAD_FAIL", "DRIVE_UPLOAD_FAILED"):
             name = payload[0] if payload else "unknown"
             msg = payload[1] if len(payload) > 1 else ""
-            self.append_log_text(f"[GUI] Google Drive 업로드 실패: {name} - {msg}\n")
+            self.append_log_text(f"Google Drive 업로드 실패: {name} - {msg}\n", force=True)
+            self.append_log_text("전사 결과 파일은 로컬에 저장되어 있습니다.\n", force=True)
 
         elif evt == "DRIVE_UPLOAD_SKIPPED":
             name = payload[0] if payload else "unknown"
             msg = payload[1] if len(payload) > 1 else "Google Drive 자동 업로드 OFF"
-            self.append_log_text(f"[GUI] Google Drive 업로드 건너뜀: {name} - {msg}\n")
+            self.append_log_text(f"Google Drive 업로드 건너뜀: {name} - {msg}\n", force=True)
 
 
 
